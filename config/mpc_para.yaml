@@ -1,0 +1,41 @@
+# Quadrotor MPC Control Parameters
+mass: 1.30
+hover_thrust: 0.39      # Initial hover thrust percentage (0.0 ~ 1.0)
+takeoff_height: 0.8     # Target takeoff height in meters
+ctrl_hz: 100            # Control loop frequency in Hz
+auto_arm_and_offboard: false  # Safety switch: false = manual arm/offboard switch via RC transmitter; true = auto arm/offboard
+
+# Odometry topic (must be nav_msgs/Odometry format with position, orientation, linear velocity)
+# Examples:
+#   /mavros/local_position/odom
+#   /vins_estimator/odometry
+#   /Odometry
+odomTopicName: /mavros/local_position/odom
+
+# MPC Constraints
+boundings:
+  T_max: 25.0
+  T_min: 2.0
+  wx_max: 2.0
+  wx_min: -2.0
+  wy_max: 2.0
+  wy_min: -2.0
+  wz_max: 2.0
+  wz_min: -2.0
+
+# MPC Cost Weights (Q, R)
+cost:
+  cost_px: 100
+  cost_py: 100
+  cost_pz: 100
+  cost_qw: 100
+  cost_qx: 100
+  cost_qy: 100
+  cost_qz: 100
+  cost_vx: 30
+  cost_vy: 30
+  cost_vz: 30
+  cost_thrust: 30
+  cost_wx: 30
+  cost_wy: 30
+  cost_wz: 30

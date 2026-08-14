@@ -1,0 +1,35 @@
+# ROS build artifacts
+build/
+devel/
+install/
+.catkin_workspace
+.catkin_tools/
+
+# CMake / IDE
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.pyc
+__pycache__/
+.vscode/
+.idea/
+.project
+.cproject
+
+# Compiled libraries and binaries
+*.so
+*.a
+*.o
+*.out
+model/mpc_test
+model/quadrotor_mpc_codegen/test
+model/quadrotor_mpc_codegen/*.o
+model/quadrotor_mpc_codegen/*.a
+externals/qpoases/SRC/*.o
+
+# OS generated files
+.DS_Store
+Thumbs.db
+*.swp
+*~
