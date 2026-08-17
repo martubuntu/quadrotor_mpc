@@ -16,7 +16,16 @@ graph LR
 
 ## 🌪️ 一、 VM Ubuntu 20.04 Gazebo SITL 仿真完整操作指南
 
-本仿真配置基于用户自定义风场 `windy.world`（**Gazebo 仿真时间 90s~120s 施加 +X 方向 3.0 m/s 阶跃突发阵风**），完整对比 NMPC 与 PID 在无风稳态、阵风冲击与风停恢复 3 个阶段的动态响应。
+仿真世界基于 `windy.world`（**Gazebo 仿真时间 90s~120s 施加 +X 方向 3.0 m/s 阶跃突发阵风**），采用**控制器起飞悬停与轨迹触发解耦**的标准流程。
+
+```mermaid
+graph LR
+    T1["终端 1: Gazebo SITL"] --> T2["终端 2: roscore"]
+    T2 --> T3["终端 3: MAVROS"]
+    T3 --> T4["终端 4: 启动控制器 (自动起飞并悬停)"]
+    T4 --> T5["终端 5: 启动圆轨迹跟踪"]
+    T5 --> T6["终端 6: 性能评估与绘图"]
+```
 
 ### 步骤 1：终端 1 启动 PX4 SITL 与 Gazebo 风场环境
 ```bash
@@ -27,39 +36,46 @@ make px4_sitl gazebo-classic_iris__windy
 ### 步骤 2：终端 2 启动 ROS Master
 ```bash
 source /opt/ros/noetic/setup.bash
-source ~/catkin_ws/devel/setup.bash
 roscore
 ```
 
 ### 步骤 3：终端 3 启动 MAVROS 桥接节点
 ```bash
 source /opt/ros/noetic/setup.bash
-source ~/catkin_ws/devel/setup.bash
+source ~/Desktop/catkin_ws/devel/setup.bash
 roslaunch mavros px4.launch fcu_url:="udp://:14540@127.0.0.1:14557"
 ```
 
-### 步骤 4：终端 4 启动控制器实验（二选一）
+### 步骤 4：终端 4 启动控制器（起飞至 1.5m 稳定悬停）
 
-#### 实验组 A：启动 NMPC 轨迹跟踪控制器（全自动起飞与绕圆）
+#### 实验组 A（NMPC 控制器）：
 ```bash
-source ~/catkin_ws/devel/setup.bash
+source ~/Desktop/catkin_ws/devel/setup.bash
 roslaunch uav_mpc simulation_mpc.launch
 ```
-> 无人机将自动解锁并起飞至 1.5m 稳定悬停，15s 后自动切入半径 1.5m、线速度 0.8m/s 的连续绕圆轨迹，自动历经 90~120s 的 3m/s 阵风扰动并自动记录 `flight_log_NMPC_*.csv`。
+> 控制器自动解锁起飞至 1.5m，随后在 `(0, 0, 1.5)` 稳定悬停等待轨迹指令。
 
-#### 对照组 B：启动 PX4 原生级联 PID 轨迹跟踪控制器
+#### 对照组 B（PID 基准控制器）：
 ```bash
-source ~/catkin_ws/devel/setup.bash
+source ~/Desktop/catkin_ws/devel/setup.bash
 roslaunch uav_mpc simulation_pid_baseline.launch
 ```
-> 在相同风场与初始条件下运行相同的绕圆轨迹，由 PX4 底层位置-速度 PID 跟踪，自动记录 `flight_log_PID_*.csv`。
+> 基准控制器自动解锁起飞至 1.5m 稳定悬停。
 
-### 步骤 5：终端 5 运行多维度定量评估与对比绘图
+### 步骤 5：终端 5 发布圆轨迹（按需启动走圆）
+确认无人机在 1.5m 高度悬停平稳后，在终端 5 执行：
 ```bash
-cd ~/catkin_ws/src/quadrotor_mpc
+source ~/Desktop/catkin_ws/devel/setup.bash
+roslaunch uav_mpc publish_circle_traj.launch center_z:=1.5 radius:=1.5 linear_vel:=0.8 cycles:=15
+```
+> 轨迹节点将在前 3 秒以平滑三次多项式过渡（无速度/加速度冲击）从悬停位置切入圆周，连续飞行 15 圈并历经 90~120s 突发阵风。
+
+### 步骤 6：终端 6 运行多维度定量评估与对比绘图
+```bash
+cd ~/Desktop/catkin_ws/src/quadrotor_mpc
 python3 scripts/evaluate_nmpc_vs_pid.py
 ```
-> 自动读取最新的 NMPC 与 PID 飞行日志，划分**无风阶段 (20~90s)**、**阵风阶段 (90~120s)** 与**恢复阶段 (120~150s)**，自动输出 Markdown/终端定量指标对比表，并生成高分辨率对比图 `data/simulation_evaluation_report.png`。
+> 自动输出包含 **3D/各轴跟踪 RMSE**、**阵风抗扰放大率**、**瞬态峰值**、**角速度平滑度** 与 **能耗代理指标** 的对比表格，并在 `data/` 目录下生成高分辨率综合对比图 `simulation_evaluation_report.png`。
 
 ---
 
@@ -83,21 +99,15 @@ python3 scripts/evaluate_nmpc_vs_pid.py
 ## 🛠️ 三、 虚拟机桌面工作空间搭建与一键编译指令
 
 ### 1. 首次在虚拟机桌面（Desktop）搭建工作空间与克隆代码
-在 Ubuntu 20.04 虚拟机终端执行：
 ```bash
-# 创建桌面工作空间
 mkdir -p ~/Desktop/catkin_ws/src
 cd ~/Desktop/catkin_ws/src
-
-# 克隆 dev-simulation 分支
 git clone -b dev-simulation https://github.com/martubuntu/quadrotor_mpc.git
 
-# 编译整个工作空间
 cd ~/Desktop/catkin_ws
 source /opt/ros/noetic/setup.bash
 catkin_make -DCMAKE_BUILD_TYPE=Release
 
-# 写入环境变量配置（开终端自动生效）
 echo "source ~/Desktop/catkin_ws/devel/setup.bash" >> ~/.bashrc
 source ~/.bashrc
 ```
@@ -111,27 +121,6 @@ cd ~/Desktop/catkin_ws/src/quadrotor_mpc
 ### 3. PC 端推送修改至 GitHub 分支
 ```bash
 git add .
-git commit -m "feat(sim): setup SITL simulation with wind gust and NMPC vs PID evaluation framework"
+git commit -m "fix(sim): decouple takeoff and trajectory publisher, enhance thrust estimator and trajectory transition"
 git push origin dev-simulation
 ```
-
----
-
-## 📝 四、 开发更新日志（Changelog）
-
-### [2026-08-17] - 阶段一：Gazebo SITL 仿真闭环与多维度性能评估体系
-- **仿真配置与风场适配**：
-  - 创建 `config/mpc_simulation.yaml`，适配 Gazebo Iris 模型物理参数（`mass: 1.5kg`, `hover_thrust: 0.58`），开启 `auto_arm_and_offboard: true`。
-  - 适配 `windy.world`（90s~120s 持续 30s 施加 +X 3m/s 阵风）。
-- **PID 对照组基准节点**：
-  - 编写 `src/pid_baseline_node.cpp`，实现基于 PX4 原生级联 PID 的轨迹跟踪基准控制器，并发布一致的调试遥测话题。
-  - 在 `CMakeLists.txt` 中添加 `pid_baseline_node` 编译目标。
-- **仿真一键启动 Launch 体系**：
-  - 创建 `launch/simulation_mpc.launch`（NMPC 实验组，自动标记 `log_prefix: NMPC`）。
-  - 创建 `launch/simulation_pid_baseline.launch`（PID 对照组，自动标记 `log_prefix: PID`）。
-- **多维度性能评估与分析脚本**：
-  - 编写 `scripts/evaluate_nmpc_vs_pid.py`，实现多区间划分（无风/阵风/恢复）、4 大维度 14 项指标自动计算、格式化表格输出与综合报告图生成。
-- **数据记录器升级**：
-  - 更新 `src/data_logger_node.cpp`，支持通过 `log_prefix` 动态命名日志文件（`flight_log_NMPC_*.csv` 与 `flight_log_PID_*.csv`）。
-- **分支与脚本同步**：
-  - 更新 `scripts/pull_and_build.sh` 适配 `dev-simulation` 分支。

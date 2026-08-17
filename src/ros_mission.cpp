@@ -121,9 +121,19 @@ void MPCRos::FSMProcess()
           }
           wrapper->gerReference(reference);
           if(wrapper->getSolution(current_odom, control))
+          {
             publishcontrol();
+          }
           else
-            exit(0);
+          {
+            ROS_WARN_THROTTLE(1.0, "[MPC] Hover solver warning. Holding safe hover thrust.");
+            control[0] = 9.8066f;
+            control[1] = 0.0f;
+            control[2] = 0.0f;
+            control[3] = 0.0f;
+            publishcontrol();
+            wrapper->initSolver(current_odom);
+          }
           break;
 
         case AUTO_TRACKING:
@@ -136,16 +146,26 @@ void MPCRos::FSMProcess()
           if(reachgoal(current_odom, goal))
           {
             mpc_mode = AUTO_HOVER;
+            hover_odom = current_odom;
             fsm_switch = 1;
           }
           wrapper->gerReference(reference);
           if(wrapper->getSolution(current_odom, control))
+          {
             publishcontrol();
+          }
           else
           {
             mpc_mode = AUTO_HOVER;
+            hover_odom = current_odom;
             fsm_switch = 1;
-            ROS_ERROR("NO_Solution. Turn to HOVER Mode");
+            ROS_WARN("[MPC] Tracking solver warning. Fallback to safe HOVER Mode.");
+            control[0] = 9.8066f;
+            control[1] = 0.0f;
+            control[2] = 0.0f;
+            control[3] = 0.0f;
+            publishcontrol();
+            wrapper->initSolver(current_odom);
           }
           break;
 
@@ -166,13 +186,24 @@ void MPCRos::FSMProcess()
           if(reachgoal(current_odom, hover_point))
           {
             mpc_mode = AUTO_HOVER;
+            hover_odom = current_odom;
             fsm_switch = 1;
           }
           wrapper->gerReference(reference);
           if(wrapper->getSolution(current_odom, control))
+          {
             publishcontrol();
-          // if(control[0] > 0.45 * 9.8066 / hover_thrust)
-          //   control[0] = 0.45 * 9.8066 / hover_thrust;
+          }
+          else
+          {
+            ROS_WARN_THROTTLE(1.0, "[MPC] Takeoff solver warning. Applying safe lift.");
+            control[0] = 10.5f;
+            control[1] = 0.0f;
+            control[2] = 0.0f;
+            control[3] = 0.0f;
+            publishcontrol();
+            wrapper->initSolver(current_odom);
+          }
           break;
       }
     }
@@ -367,21 +398,22 @@ void MPCRos::publishcontrol()
   ref_pose.pose.orientation.z = reference(6, 0);
   debug_ref_pose_pub.publish(ref_pose);
 
-  // 3. Publish Raw Control Outputs from MPC
+  // 3. Control input validation and protection against NaNs
+  if (std::isnan(control[0]) || control[0] < 2.0f) control[0] = 9.8066f;
+  if (std::isnan(control[1])) control[1] = 0.0f;
+  if (std::isnan(control[2])) control[2] = 0.0f;
+  if (std::isnan(control[3])) control[3] = 0.0f;
+
   std_msgs::Float32MultiArray ctrl_msg;
-  ctrl_msg.data.push_back(control[0]); // thrust
+  ctrl_msg.data.push_back(control[0]); // thrust acc
   ctrl_msg.data.push_back(control[1]); // wx
   ctrl_msg.data.push_back(control[2]); // wy
   ctrl_msg.data.push_back(control[3]); // wz
   debug_control_pub.publish(ctrl_msg);
 
-  double thrust = 0;
-  //thrust = control[0] * hover_thrust / 9.8066;
-  //thrust = control[0] * hover_thrust / 9.8066;
-  std::cout<<"hov_thrust = 9.8066 / thrust_estimator->getThr2Acc() = "<<9.8066 / thrust_estimator->getThr2Acc()<<std::endl;
-  thrust = thrust_estimator->computeDesiredThrust(control[0]);
+  double thrust = thrust_estimator->computeDesiredThrust(control[0]);
+  thrust = std::max(0.15, std::min(0.92, thrust));
   thrust_estimator->pushThrustRecord(ros::Time::now().toSec(), thrust);
-  //ROS_INFO_THROTTLE(1.0, "Thr2Acc: %f, estimated hover_thrust: %f", thrust_estimator->getThr2Acc(), 9.8066 / thrust_estimator->getThr2Acc());
 
   // 4. Publish Estimated Hover Thrust
   std_msgs::Float64 hover_thrust_msg;

@@ -30,7 +30,7 @@ private:
     double publish_rate_;
     int k_sample_;
     double t_step_;
-    bool auto_start_;
+    double transition_time_; // Smooth lead-in duration from hover center to circle edge
 
     double total_circle_duration_;
 
@@ -40,35 +40,47 @@ public:
         // Load parameters
         nh_.param<double>("center_x", center_x_, 0.0);
         nh_.param<double>("center_y", center_y_, 0.0);
-        nh_.param<double>("center_z", center_z_, 1.0);
-        nh_.param<double>("radius", radius_, 1.0);
+        nh_.param<double>("center_z", center_z_, 1.5);
+        nh_.param<double>("radius", radius_, 1.5);
         nh_.param<double>("linear_vel", linear_vel_, 0.8);
-        nh_.param<double>("start_delay", start_delay_, 3.0);
-        nh_.param<int>("cycles", cycles_, -1); // -1 means infinite circling
+        nh_.param<double>("start_delay", start_delay_, 0.0);
+        nh_.param<int>("cycles", cycles_, 15); // >0: number of cycles, -1: infinite
         nh_.param<double>("publish_rate", publish_rate_, 50.0);
         nh_.param<int>("k_sample", k_sample_, DEFAULT_KSAMPLE);
         nh_.param<double>("t_step", t_step_, DEFAULT_T_STEP);
-        nh_.param<bool>("auto_start", auto_start_, true);
+        nh_.param<double>("transition_time", transition_time_, 3.0);
 
         if (radius_ <= 0.05) radius_ = 0.05;
         omega_ = linear_vel_ / radius_;
-        total_circle_duration_ = (cycles_ > 0) ? (2.0 * M_PI * cycles_ / omega_) : 1e9;
+        total_circle_duration_ = (cycles_ > 0) ? (transition_time_ + 2.0 * M_PI * cycles_ / omega_) : 1e9;
 
         mpc_ref_pub_ = nh_.advertise<quadrotor_msgs::mpc_ref_traj>("/mpc_ref_traj", 1);
         debug_ref_path_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/circle_traj/current_ref", 1);
 
-        ROS_INFO("[CircleTraj] Initialized: Center(%.2f, %.2f, %.2f), Radius: %.2f m, Vel: %.2f m/s, Omega: %.2f rad/s, Cycles: %d",
-                 center_x_, center_y_, center_z_, radius_, linear_vel_, omega_, cycles_);
+        ROS_INFO("[CircleTraj] Ready: Center(%.2f, %.2f, %.2f), Radius: %.2f m, Vel: %.2f m/s, Cycles: %d (Transition: %.1fs)",
+                 center_x_, center_y_, center_z_, radius_, linear_vel_, cycles_, transition_time_);
     }
 
     void evaluateCircle(double t_query, Eigen::Vector3d &p, Eigen::Vector3d &v, Eigen::Vector3d &a)
     {
         if (t_query < 0.0)
         {
-            // Hover at start point of circle (angle = 0)
-            p << center_x_ + radius_, center_y_, center_z_;
+            // Before launch: Hover at center position
+            p << center_x_, center_y_, center_z_;
             v << 0.0, 0.0, 0.0;
             a << 0.0, 0.0, 0.0;
+        }
+        else if (t_query < transition_time_)
+        {
+            // Smooth cubic transition from hover center (0, 0, z) to circle start (R, 0, z)
+            double s = t_query / transition_time_;
+            double h = 3.0 * s * s - 2.0 * s * s * s;
+            double dh = (6.0 * s - 6.0 * s * s) / transition_time_;
+            double ddh = (6.0 - 12.0 * s) / (transition_time_ * transition_time_);
+
+            p << center_x_ + radius_ * h, center_y_, center_z_;
+            v << radius_ * dh, 0.0, 0.0;
+            a << radius_ * ddh, 0.0, 0.0;
         }
         else if (cycles_ > 0 && t_query >= total_circle_duration_)
         {
@@ -80,7 +92,7 @@ public:
         else
         {
             // Active circular flight
-            double theta = omega_ * t_query;
+            double theta = omega_ * (t_query - transition_time_);
             p << center_x_ + radius_ * std::cos(theta),
                  center_y_ + radius_ * std::sin(theta),
                  center_z_;
@@ -105,7 +117,7 @@ public:
             ros::Time now = ros::Time::now();
             double elapsed = (now - node_start).toSec();
 
-            // Flight timing: wait for start_delay
+            // Flight timing
             double t_active = elapsed - start_delay_;
 
             quadrotor_msgs::mpc_ref_traj traj_msg;

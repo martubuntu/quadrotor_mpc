@@ -3,11 +3,12 @@
   <!-- Circle trajectory arguments -->
   <arg name="center_x" default="0.0"/>
   <arg name="center_y" default="0.0"/>
-  <arg name="center_z" default="1.2"/>
-  <arg name="radius" default="1.0"/>
-  <arg name="linear_vel" default="0.6"/>
-  <arg name="start_delay" default="0.0"/>  <!-- Triggered immediately when launched -->
-  <arg name="cycles" default="-1"/>       <!-- -1: infinite continuous circling, >0: number of cycles -->
+  <arg name="center_z" default="1.5"/>
+  <arg name="radius" default="1.5"/>
+  <arg name="linear_vel" default="0.8"/>
+  <arg name="start_delay" default="0.0"/>      <!-- Triggered immediately when launched -->
+  <arg name="transition_time" default="3.0"/>  <!-- 3s smooth lead-in from hover position to circle -->
+  <arg name="cycles" default="15"/>            <!-- ~175s total flight, fully covering 90~120s wind gust -->
   <arg name="publish_rate" default="50.0"/>
 
   <!-- Start Circle Trajectory Publisher Node -->
@@ -18,6 +19,7 @@
     <param name="radius" value="$(arg radius)"/>
     <param name="linear_vel" value="$(arg linear_vel)"/>
     <param name="start_delay" value="$(arg start_delay)"/>
+    <param name="transition_time" value="$(arg transition_time)"/>
     <param name="cycles" value="$(arg cycles)"/>
     <param name="publish_rate" value="$(arg publish_rate)"/>
   </node>
