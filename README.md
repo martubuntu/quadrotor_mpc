@@ -85,7 +85,10 @@ git push origin dev-circle-mpc
 
 > *说明：后续对代码的每一次重要修改，请在此处按时间倒序依次记录。*
 
-### [2026-08-17]
+### [2026-08-17] (实机代码里程碑 v1.0-real-flight)
+- **实机版本归档与备份**：
+  - 创建实机飞行专用永久备份分支 `real-flight-backup` 与版本标签 `v1.0-real-flight`。
+  - 创建并切换至仿真开发分支 `dev-simulation`，用于后续 Gazebo/SITL 仿真开发。
 - **新增数据记录节点与可视化工具**：
   - 编写 `src/data_logger_node.cpp`，高频采集位置、速度、跟踪误差、MPC 控制量与推力映射系数，自动保存到 `data/flight_log_*.csv`。
   - 编写 `scripts/plot_flight_data.py`，支持一键绘制 3D 航迹、误差随时间变化、角速度和自适应推力收敛曲线。
@@ -93,7 +96,6 @@ git push origin dev-circle-mpc
   - 新建 `launch/publish_circle_traj.launch`，将 MPC 悬停接管与轨迹生成分离，使绕圆启动时机完全可控。
 - **修复物理边界约束动态绑定**：
   - 修改 `src/mpc_wrapper.cpp`，消除硬编码数值，将 YAML 中的 `T_max`, `T_min`, `wx_max`, `wy_max`, `wz_max` 动态传递至 ACADO QP 求解器。
-- **新建开发分支**：创建 `dev-circle-mpc` 分支管理实机测试代码。
 
 ### [2026-08-14]
 - **新增圆轨迹生成节点**：编写 `src/circle_traj_node.cpp` 与 `launch/run_circle_traj.launch`，支持向前预测 20 步平滑动力学参考。
