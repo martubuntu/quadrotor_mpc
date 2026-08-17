@@ -7,16 +7,26 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
-  quadrotor_msgs
+  geometry_msgs
+  message_generation
 )
 
 find_package(Eigen3 REQUIRED)
 
+add_message_files(
+  FILES
+  mpc_ref_point.msg
+  mpc_ref_traj.msg
+)
+
+generate_messages(
+  DEPENDENCIES
+  geometry_msgs
+  std_msgs
+)
+
 catkin_package(
-#  INCLUDE_DIRS include
-#  LIBRARIES uav_mpc
-#  CATKIN_DEPENDS roscpp rospy std_msgs
-#  DEPENDS system_lib
+  CATKIN_DEPENDS roscpp rospy std_msgs geometry_msgs message_runtime
 )
 
 add_library(mpc_solver
@@ -82,6 +92,3 @@ add_executable(pid_baseline_node
 target_link_libraries(pid_baseline_node
   ${catkin_LIBRARIES})
 add_dependencies(pid_baseline_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-
-
-
