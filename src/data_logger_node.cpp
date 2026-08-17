@@ -60,7 +60,9 @@ public:
     {
         std::string odom_topic;
         nh_.param<std::string>("/odomTopicName", odom_topic, "/mavros/local_position/odom");
-        nh_.param<double>("log_rate", log_rate_, 50.0);
+        std::string log_prefix;
+        nh_.param<std::string>("log_prefix", log_prefix, "NMPC");
+        nh_.param<double>("log_rate", log_rate_, 20.0);
         nh_.param<std::string>("save_dir", save_dir_, "");
 
         raw_control_.resize(4, 0.0f);
@@ -86,7 +88,7 @@ public:
         std::time_t t = std::time(nullptr);
         char time_str[100];
         std::strftime(time_str, sizeof(time_str), "%Y%m%d_%H%M%S", std::localtime(&t));
-        csv_filepath_ = save_dir_ + "/flight_log_" + std::string(time_str) + ".csv";
+        csv_filepath_ = save_dir_ + "/flight_log_" + log_prefix + "_" + std::string(time_str) + ".csv";
 
         csv_file_.open(csv_filepath_);
         if (csv_file_.is_open())

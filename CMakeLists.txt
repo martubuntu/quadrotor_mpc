@@ -73,4 +73,10 @@ add_executable(data_logger_node
 target_link_libraries(data_logger_node
   ${catkin_LIBRARIES})
 
+add_executable(pid_baseline_node
+  src/pid_baseline_node.cpp)
+
+target_link_libraries(pid_baseline_node
+  ${catkin_LIBRARIES})
+
 

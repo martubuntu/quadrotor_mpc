@@ -1,0 +1,37 @@
+# Quadrotor MPC Control Parameters for Gazebo SITL Simulation (Iris Model)
+mass: 1.50
+hover_thrust: 0.58         # Gazebo Iris initial hover thrust percentage (0.0 ~ 1.0)
+takeoff_height: 1.5        # Target takeoff height in meters
+ctrl_hz: 100               # Control loop frequency in Hz
+auto_arm_and_offboard: true # In simulation, enable auto arm and offboard
+
+# Odometry topic from MAVROS (EKF2 fused odometry)
+odomTopicName: /mavros/local_position/odom
+
+# MPC Constraints
+boundings:
+  T_max: 30.0
+  T_min: 2.0
+  wx_max: 3.0
+  wx_min: -3.0
+  wy_max: 3.0
+  wy_min: -3.0
+  wz_max: 2.0
+  wz_min: -2.0
+
+# MPC Cost Weights (Q, R)
+cost:
+  cost_px: 120
+  cost_py: 120
+  cost_pz: 150
+  cost_qw: 100
+  cost_qx: 100
+  cost_qy: 100
+  cost_qz: 100
+  cost_vx: 35
+  cost_vy: 35
+  cost_vz: 40
+  cost_thrust: 20
+  cost_wx: 25
+  cost_wy: 25
+  cost_wz: 25
