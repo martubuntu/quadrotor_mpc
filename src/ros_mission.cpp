@@ -84,13 +84,26 @@ void MPCRos::FSMProcess()
       ROS_INFO("MPC_INIT");
     }
 
-    // Safety logic for manual takeover: when pilot switches to OFFBOARD while armed, enter AUTO_HOVER at current pose
-    if(!auto_arm_and_offboard && mpc_mode == AUTO_TAKEOFF && current_state.mode == "OFFBOARD" && current_state.armed)
+    // Safety logic for manual takeover:
+    if(!auto_arm_and_offboard)
     {
-      hover_odom = current_odom;
-      mpc_mode = AUTO_HOVER;
-      fsm_switch = 1;
-      ROS_INFO("[MPC] Drone is in OFFBOARD & ARMED. Switched to AUTO_HOVER at current position.");
+      if(current_state.mode != "OFFBOARD" || !current_state.armed)
+      {
+        // When not in OFFBOARD, continuously update standby hover target to current pose
+        hover_odom = current_odom;
+        mpc_mode = AUTO_HOVER;
+        fsm_switch = 1;
+      }
+      else if(fsm_switch && current_state.mode == "OFFBOARD" && current_state.armed)
+      {
+        hover_odom = current_odom;
+        mpc_mode = AUTO_HOVER;
+        fsm_switch = 0;
+        ROS_INFO("[MPC] Entered OFFBOARD mode. Holding current hover position: (%.2f, %.2f, %.2f)",
+                 hover_odom.pose.pose.position.x,
+                 hover_odom.pose.pose.position.y,
+                 hover_odom.pose.pose.position.z);
+      }
     }
 
     if(mpc_init)
@@ -105,25 +118,29 @@ void MPCRos::FSMProcess()
             ROS_INFO("AUTO_HOVER");
             fsm_switch = 0;
           }
-          Q = Eigen::Quaternionf (hover_odom.pose.pose.orientation.w,
-                                  hover_odom.pose.pose.orientation.x,
-                                  hover_odom.pose.pose.orientation.y,
-                                  hover_odom.pose.pose.orientation.z);  
-          eulerAngle = Q.matrix().eulerAngles(2,1,0);
-          if(eulerAngle(0)>1.5707963)
-            eulerAngle(0) = eulerAngle(0) - 3.1415926;
-          for(int i = 0; i < Ksample + 1; ++i)
           {
-            reference.col(i) << hover_odom.pose.pose.position.x, hover_odom.pose.pose.position.y, hover_odom.pose.pose.position.z,
-                                cos(eulerAngle(0)/2), 0, 0, sin(eulerAngle(0)/2),
-                                0, 0, 0,
-                                9.8066, 0, 0, 0;
+            double qw = hover_odom.pose.pose.orientation.w;
+            double qx = hover_odom.pose.pose.orientation.x;
+            double qy = hover_odom.pose.pose.orientation.y;
+            double qz = hover_odom.pose.pose.orientation.z;
+            double hover_yaw = std::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz));
+            for(int i = 0; i < Ksample + 1; ++i)
+            {
+              reference.col(i) << hover_odom.pose.pose.position.x, hover_odom.pose.pose.position.y, hover_odom.pose.pose.position.z,
+                                  std::cos(hover_yaw / 2.0), 0.0, 0.0, std::sin(hover_yaw / 2.0),
+                                  0.0, 0.0, 0.0,
+                                  9.8066, 0.0, 0.0, 0.0;
+            }
           }
           wrapper->gerReference(reference);
           if(wrapper->getSolution(current_odom, control))
             publishcontrol();
           else
-            ROS_WARN_THROTTLE(1.0, "[MPC] No solution in AUTO_HOVER!");
+          {
+            ROS_WARN_THROTTLE(1.0, "[MPC] No solution in AUTO_HOVER! Maintaining standby hover thrust.");
+            control << 9.8066, 0.0, 0.0, 0.0;
+            publishcontrol();
+          }
           break;
 
         case AUTO_TRACKING:

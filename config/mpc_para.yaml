@@ -1,29 +1,31 @@
-# Quadrotor MPC Control Parameters
-mass: 1.30
-hover_thrust: 0.39      # Initial hover thrust percentage (0.0 ~ 1.0)
-takeoff_height: 0.8     # Target takeoff height in meters
-ctrl_hz: 100            # Control loop frequency in Hz
-auto_arm_and_offboard: false  # Safety switch: false = manual arm/offboard switch via RC transmitter; true = auto arm/offboard
+# Quadrotor MPC Control Parameters (适用于 5KG 及各类多旋翼无人机)
 
-# Odometry topic (must be nav_msgs/Odometry format with position, orientation, linear velocity)
-# Examples:
-#   /mavros/local_position/odom
-#   /vins_estimator/odometry
-#   /Odometry
+# 1. 核心悬停油门（极其重要！请务必根据实机修改）
+# 5KG 飞机的真实悬停油门百分比 (0.0 ~ 1.0)。
+# 可先通过遥控器定点模式悬停，查看地面站 QGC 的油门百分比填入此处。
+hover_thrust: 0.38      
+
+# 2. 安全开关与基础参数
+auto_arm_and_offboard: false  # 必须为 false：飞手手动起飞后由遥控器切入 OFFBOARD 接管
+takeoff_height: 0.8           # 起飞高度(米)
+ctrl_hz: 100                  # 控制频率(Hz)
+mass: 5.0                     # 仅作记录（求解器内部已归一化为比推力）
+
+# 3. 里程计话题接口 (必须为 nav_msgs/Odometry，包含位置、四元数姿态与线速度)
 odomTopicName: /mavros/local_position/odom
 
-# MPC Constraints
+# 4. MPC 控制量物理约束 (针对 5KG 大机身的推荐平稳限制)
 boundings:
-  T_max: 25.0
-  T_min: 2.0
-  wx_max: 2.0
-  wx_min: -2.0
-  wy_max: 2.0
-  wy_min: -2.0
-  wz_max: 2.0
-  wz_min: -2.0
+  T_max: 20.0     # 最大比推力加速度 (m/s^2)，约 2.0g
+  T_min: 2.0      # 最小比推力加速度 (m/s^2)，约 0.2g (防止电机停转)
+  wx_max: 1.2     # 滚转角速度上限 (rad/s，约 70 deg/s，防止大机身剧烈摆动)
+  wx_min: -1.2
+  wy_max: 1.2     # 俯仰角速度上限 (rad/s)
+  wy_min: -1.2
+  wz_max: 0.8     # 偏航角速度上限 (rad/s，约 45 deg/s)
+  wz_min: -0.8
 
-# MPC Cost Weights (Q, R)
+# 5. MPC 权重矩阵 (Q, R)
 cost:
   cost_px: 100
   cost_py: 100
