@@ -9,6 +9,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   geometry_msgs
   message_generation
+  roslib
 )
 
 find_package(Eigen3 REQUIRED)
@@ -26,7 +27,7 @@ generate_messages(
 )
 
 catkin_package(
-  CATKIN_DEPENDS roscpp rospy std_msgs geometry_msgs message_runtime
+  CATKIN_DEPENDS roscpp rospy std_msgs geometry_msgs message_runtime roslib
 )
 
 add_library(mpc_solver
