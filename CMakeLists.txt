@@ -60,23 +60,28 @@ add_executable(mpc_node
 target_link_libraries(mpc_node
   mpc_solver
   ${catkin_LIBRARIES})
+add_dependencies(mpc_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 add_executable(circle_traj_node
   src/circle_traj_node.cpp)
 
 target_link_libraries(circle_traj_node
   ${catkin_LIBRARIES})
+add_dependencies(circle_traj_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 add_executable(data_logger_node
   src/data_logger_node.cpp)
 
 target_link_libraries(data_logger_node
   ${catkin_LIBRARIES})
+add_dependencies(data_logger_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 add_executable(pid_baseline_node
   src/pid_baseline_node.cpp)
 
 target_link_libraries(pid_baseline_node
   ${catkin_LIBRARIES})
+add_dependencies(pid_baseline_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
 
 
