@@ -41,6 +41,22 @@ MPCWrapper::~MPCWrapper()
 
 bool MPCWrapper::initSolver(nav_msgs::Odometry& msg)
 {
+  Eigen::Quaterniond q_init(
+      msg.pose.pose.orientation.w,
+      msg.pose.pose.orientation.x,
+      msg.pose.pose.orientation.y,
+      msg.pose.pose.orientation.z);
+
+  q_init.normalize();
+
+  Eigen::Vector3d v_body_init(
+      msg.twist.twist.linear.x,
+      msg.twist.twist.linear.y,
+      msg.twist.twist.linear.z);
+
+  // base_link/body -> map/world
+  Eigen::Vector3d v_world_init = q_init * v_body_init;
+
   /* Clear solver memory. */
   memset(&acadoWorkspace, 0, sizeof( acadoWorkspace ));
   memset(&acadoVariables, 0, sizeof( acadoVariables ));
@@ -54,13 +70,13 @@ bool MPCWrapper::initSolver(nav_msgs::Odometry& msg)
 	  acadoVariables.x[i * NX + 0] = msg.pose.pose.position.x;
 	  acadoVariables.x[i * NX + 1] = msg.pose.pose.position.y;
 	  acadoVariables.x[i * NX + 2] = msg.pose.pose.position.z;
-	  acadoVariables.x[i * NX + 3] = msg.pose.pose.orientation.w;
-	  acadoVariables.x[i * NX + 4] = msg.pose.pose.orientation.x;
-	  acadoVariables.x[i * NX + 5] = msg.pose.pose.orientation.y;
-	  acadoVariables.x[i * NX + 6] = msg.pose.pose.orientation.z;
-	  acadoVariables.x[i * NX + 7] = msg.twist.twist.linear.x;
-	  acadoVariables.x[i * NX + 8] = msg.twist.twist.linear.y;
-	  acadoVariables.x[i * NX + 9] = msg.twist.twist.linear.z;
+	  acadoVariables.x[i * NX + 3] = q_init.w();
+	  acadoVariables.x[i * NX + 4] = q_init.x();
+	  acadoVariables.x[i * NX + 5] = q_init.y();
+	  acadoVariables.x[i * NX + 6] = q_init.z();
+	  acadoVariables.x[i * NX + 7] = v_world_init.x();
+	  acadoVariables.x[i * NX + 8] = v_world_init.y();
+	  acadoVariables.x[i * NX + 9] = v_world_init.z();
   }
 
   for (int i = 0; i < NX; ++i)
@@ -257,11 +273,46 @@ void MPCWrapper::updateState(nav_msgs::Odometry& msg)
   acadoVariables.x0[0] = msg.pose.pose.position.x;
   acadoVariables.x0[1] = msg.pose.pose.position.y;
   acadoVariables.x0[2] = msg.pose.pose.position.z;
-  acadoVariables.x0[3] = msg.pose.pose.orientation.w;
-  acadoVariables.x0[4] = msg.pose.pose.orientation.x;
-  acadoVariables.x0[5] = msg.pose.pose.orientation.y;
-  acadoVariables.x0[6] = msg.pose.pose.orientation.z;
-  acadoVariables.x0[7] = msg.twist.twist.linear.x;
-  acadoVariables.x0[8] = msg.twist.twist.linear.y;
-  acadoVariables.x0[9] = msg.twist.twist.linear.z;
+
+  Eigen::Quaterniond q(
+      msg.pose.pose.orientation.w,
+      msg.pose.pose.orientation.x,
+      msg.pose.pose.orientation.y,
+      msg.pose.pose.orientation.z);
+
+  q.normalize();
+
+  // 当前姿态
+  Eigen::Vector4d q_current;
+  q_current << q.w(), q.x(), q.y(), q.z();
+
+  // MPC 第0节点参考四元数
+  Eigen::Vector4d q_ref;
+  q_ref << acadoVariables.y[3],
+           acadoVariables.y[4],
+           acadoVariables.y[5],
+           acadoVariables.y[6];
+
+  // q 与 -q 是同一个物理姿态，保证状态四元数和参考四元数处于同一半球
+  if(q_current.dot(q_ref) < 0.0)
+  {
+    q_current = -q_current;
+  }
+
+  acadoVariables.x0[3] = q_current[0];
+  acadoVariables.x0[4] = q_current[1];
+  acadoVariables.x0[5] = q_current[2];
+  acadoVariables.x0[6] = q_current[3];
+
+  // MAVROS odom twist: base_link/body frame -> NMPC world/map frame
+  Eigen::Vector3d v_body(
+      msg.twist.twist.linear.x,
+      msg.twist.twist.linear.y,
+      msg.twist.twist.linear.z);
+
+  Eigen::Vector3d v_world = q * v_body;
+
+  acadoVariables.x0[7] = v_world.x();
+  acadoVariables.x0[8] = v_world.y();
+  acadoVariables.x0[9] = v_world.z();
 }

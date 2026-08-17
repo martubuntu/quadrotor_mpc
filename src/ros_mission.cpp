@@ -100,6 +100,7 @@ void MPCRos::FSMProcess()
       switch(mpc_mode)
       {
         case AUTO_HOVER:
+        {
           if(fsm_switch) 
           {
             ROS_INFO("AUTO_HOVER");
@@ -112,10 +113,23 @@ void MPCRos::FSMProcess()
           eulerAngle = Q.matrix().eulerAngles(2,1,0);
           if(eulerAngle(0)>1.5707963)
             eulerAngle(0) = eulerAngle(0) - 3.1415926;
+
+          Eigen::Quaternionf q_ref(
+              cos(eulerAngle(0)/2.0f),
+              0.0f,
+              0.0f,
+              sin(eulerAngle(0)/2.0f));
+
+          // 保证参考四元数和当前四元数处于同一半球
+          if(q_ref.coeffs().dot(Q.coeffs()) < 0.0f)
+          {
+            q_ref.coeffs() *= -1.0f;
+          }
+
           for(int i = 0; i < Ksample + 1; ++i)
           {
             reference.col(i) << hover_odom.pose.pose.position.x, hover_odom.pose.pose.position.y, hover_odom.pose.pose.position.z,
-                                cos(eulerAngle(0)/2), 0, 0, sin(eulerAngle(0)/2),
+                                q_ref.w(), q_ref.x(), q_ref.y(), q_ref.z(),
                                 0, 0, 0,
                                 9.8066, 0, 0, 0;
           }
@@ -135,8 +149,10 @@ void MPCRos::FSMProcess()
             wrapper->initSolver(current_odom);
           }
           break;
+        }
 
         case AUTO_TRACKING:
+        {
           if(fsm_switch) 
           {
             ROS_INFO("AUTO_TRACKING");
@@ -168,8 +184,10 @@ void MPCRos::FSMProcess()
             wrapper->initSolver(current_odom);
           }
           break;
+        }
 
         case AUTO_TAKEOFF:
+        {
           if(fsm_switch) 
           {
             ROS_INFO("AUTO_TAKEOFF");
@@ -182,8 +200,8 @@ void MPCRos::FSMProcess()
                                 0, 0, 0,
                                 9.8066, 0, 0, 0;
           }
-          Eigen::Vector3f hover_point(start_odom.pose.pose.position.x, start_odom.pose.pose.position.y, takeoff_height);
-          if(reachgoal(current_odom, hover_point))
+          double z_error = std::fabs(current_odom.pose.pose.position.z - takeoff_height);
+          if(z_error < 0.08)
           {
             mpc_mode = AUTO_HOVER;
             hover_odom = current_odom;
@@ -205,6 +223,7 @@ void MPCRos::FSMProcess()
             wrapper->initSolver(current_odom);
           }
           break;
+        }
       }
     }
   }
@@ -270,43 +289,89 @@ void MPCRos::traj_Callback(const quadrotor_msgs::mpc_ref_traj::ConstPtr& msg)
 
 void MPCRos::getTrajRef()
 {
-  double last_px = current_odom.pose.pose.position.x;
-  double last_py = current_odom.pose.pose.position.y;
-  double next_px, next_py;
-  double yaw = 0.0;
-  double last_yaw = 0.0;
-  Eigen::Vector4d quat;
+  // 1. 固定 yaw：使用进入 HOVER 时的航向
+  Eigen::Quaterniond q_hover(
+      hover_odom.pose.pose.orientation.w,
+      hover_odom.pose.pose.orientation.x,
+      hover_odom.pose.pose.orientation.y,
+      hover_odom.pose.pose.orientation.z);
+
+  q_hover.normalize();
+
+  double yaw_hold = std::atan2(
+      2.0 * (q_hover.w() * q_hover.z() + q_hover.x() * q_hover.y()),
+      1.0 - 2.0 * (q_hover.y() * q_hover.y() + q_hover.z() * q_hover.z()));
+
+  // 2. 保存预测区间参考四元数和 aT_ref
+  std::vector<Eigen::Vector4d> q_ref_list(Ksample + 1);
+  std::vector<double> aT_ref_list(Ksample + 1, 9.8066);
+
   Eigen::Vector3d acc;
-  int k = 0;
-                        
-  for(auto point:traj_msg.mpc_ref_points)
+  Eigen::Vector4d quat;
+
+  // 用当前姿态作为四元数符号连续性的起点
+  Eigen::Vector4d last_quat;
+  last_quat << current_odom.pose.pose.orientation.w,
+               current_odom.pose.pose.orientation.x,
+               current_odom.pose.pose.orientation.y,
+               current_odom.pose.pose.orientation.z;
+
+  if (last_quat.norm() > 1e-6)
+    last_quat.normalize();
+
+  int num_points = std::min(static_cast<int>(traj_msg.mpc_ref_points.size()), Ksample + 1);
+
+  // 第一遍：计算所有 q_ref 和 aT_ref 并保证四元数连续
+  for (int k = 0; k < num_points; ++k)
   {
-    // calculate orientation according to yaw and acc
-    next_px = point.position.x;
-    next_py = point.position.y;
-    double dx = next_px - last_px;
-    double dy = next_py - last_py;
+    const auto& point = traj_msg.mpc_ref_points[k];
+    acc << point.acceleration.x,
+           point.acceleration.y,
+           point.acceleration.z + 9.8066;
 
-    if(std::hypot(point.velocity.x, point.velocity.y) > 0.05)
-      yaw = std::atan2(point.velocity.y, point.velocity.x);
-    else if(std::hypot(dx, dy) > 0.001)
-      yaw = std::atan2(dy, dx);
-    else
-      yaw = last_yaw;
+    acc2quaternion(acc, yaw_hold, quat);
 
-    last_yaw = yaw;
-    last_px = next_px;
-    last_py = next_py;
-    acc << point.acceleration.x, point.acceleration.y, point.acceleration.z + 9.8066;
-    acc2quaternion(acc, yaw, quat);
-    // ref
-    reference.col(k).setZero();
+    if (quat.norm() > 1e-6)
+      quat.normalize();
+
+    // 保证整个预测区间四元数半球连续性 (避免 q 与 -q 的 180度虚假误差)
+    if (quat.dot(last_quat) < 0.0)
+      quat = -quat;
+
+    q_ref_list[k] = quat;
+    aT_ref_list[k] = acc.norm();
+    last_quat = quat;
+  }
+
+  // 第二遍：利用相邻 q_ref 计算 body-rate 前馈参考 omega_ref
+  for (int k = 0; k < num_points; ++k)
+  {
+    const auto& point = traj_msg.mpc_ref_points[k];
+    Eigen::Vector3d omega_ref = Eigen::Vector3d::Zero();
+
+    if (k < num_points - 1)
+    {
+      Eigen::Quaterniond q_k(q_ref_list[k][0], q_ref_list[k][1], q_ref_list[k][2], q_ref_list[k][3]);
+      Eigen::Quaterniond q_next(q_ref_list[k + 1][0], q_ref_list[k + 1][1], q_ref_list[k + 1][2], q_ref_list[k + 1][3]);
+
+      q_k.normalize();
+      q_next.normalize();
+
+      Eigen::Quaterniond dq = q_k.conjugate() * q_next;
+      dq.normalize();
+
+      if (dq.w() < 0.0)
+        dq.coeffs() *= -1.0;
+
+      Eigen::AngleAxisd aa(dq);
+      omega_ref = aa.axis() * aa.angle() / 0.1; // dt = 0.1s
+    }
+
     reference.col(k) << point.position.x, point.position.y, point.position.z,
-                        quat[0], quat[1], quat[2], quat[3],
+                        q_ref_list[k][0], q_ref_list[k][1], q_ref_list[k][2], q_ref_list[k][3],
                         point.velocity.x, point.velocity.y, point.velocity.z,
-                        0, 0, 0, 0;
-    k++;
-    if (k >= Ksample + 1) break;
+                        aT_ref_list[k],
+                        omega_ref.x(), omega_ref.y(), omega_ref.z();
   }
 }
 

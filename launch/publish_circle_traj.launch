@@ -1,26 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <launch>
   <!-- Circle trajectory arguments -->
-  <arg name="center_x" default="0.0"/>
-  <arg name="center_y" default="0.0"/>
-  <arg name="center_z" default="1.5"/>
   <arg name="radius" default="1.5"/>
   <arg name="linear_vel" default="0.8"/>
-  <arg name="start_delay" default="0.0"/>      <!-- Triggered immediately when launched -->
-  <arg name="transition_time" default="3.0"/>  <!-- 3s smooth lead-in from hover position to circle -->
+  <arg name="height" default="1.5"/>
   <arg name="cycles" default="15"/>            <!-- ~175s total flight, fully covering 90~120s wind gust -->
   <arg name="publish_rate" default="50.0"/>
+  <arg name="odom_topic" default="/mavros/local_position/odom"/>
 
   <!-- Start Circle Trajectory Publisher Node -->
   <node pkg="uav_mpc" type="circle_traj_node" name="circle_traj_node" output="screen">
-    <param name="center_x" value="$(arg center_x)"/>
-    <param name="center_y" value="$(arg center_y)"/>
-    <param name="center_z" value="$(arg center_z)"/>
     <param name="radius" value="$(arg radius)"/>
     <param name="linear_vel" value="$(arg linear_vel)"/>
-    <param name="start_delay" value="$(arg start_delay)"/>
-    <param name="transition_time" value="$(arg transition_time)"/>
+    <param name="height" value="$(arg height)"/>
     <param name="cycles" value="$(arg cycles)"/>
     <param name="publish_rate" value="$(arg publish_rate)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
   </node>
 </launch>
