@@ -84,13 +84,26 @@ void MPCRos::FSMProcess()
       ROS_INFO("MPC_INIT");
     }
 
-    // Safety logic for manual takeover: when pilot switches to OFFBOARD while armed, enter AUTO_HOVER at current pose
-    if(!auto_arm_and_offboard && mpc_mode == AUTO_TAKEOFF && current_state.mode == "OFFBOARD" && current_state.armed)
+    // Safety logic for manual flight and takeover:
+    if(!auto_arm_and_offboard)
     {
-      hover_odom = current_odom;
-      mpc_mode = AUTO_HOVER;
-      fsm_switch = 1;
-      ROS_INFO("[MPC] Drone is in OFFBOARD & ARMED. Switched to AUTO_HOVER at current position.");
+      if(current_state.mode != "OFFBOARD" || !current_state.armed)
+      {
+        // When not in OFFBOARD (manual flight/landing), continuously track current pose as standby hover point
+        hover_odom = current_odom;
+        mpc_mode = AUTO_HOVER;
+        fsm_switch = 1;
+      }
+      else if(fsm_switch && current_state.mode == "OFFBOARD" && current_state.armed)
+      {
+        hover_odom = current_odom;
+        mpc_mode = AUTO_HOVER;
+        fsm_switch = 0;
+        ROS_INFO("[MPC] Entered OFFBOARD mode. Holding current hover position: (%.2f, %.2f, %.2f)",
+                 hover_odom.pose.pose.position.x,
+                 hover_odom.pose.pose.position.y,
+                 hover_odom.pose.pose.position.z);
+      }
     }
 
     if(mpc_init)
