@@ -7,7 +7,6 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
-  Eigen3
   quadrotor_msgs
 )
 
@@ -49,6 +48,7 @@ include_directories(
   ${PROJECT_SOURCE_DIR}/include
   ${EIGEN_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIRS}
+  /usr/include/eigen3
   ${catkin_INCLUDE_DIRS}
 )
 
