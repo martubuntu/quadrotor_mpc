@@ -67,3 +67,10 @@ add_executable(circle_traj_node
 target_link_libraries(circle_traj_node
   ${catkin_LIBRARIES})
 
+add_executable(data_logger_node
+  src/data_logger_node.cpp)
+
+target_link_libraries(data_logger_node
+  ${catkin_LIBRARIES})
+
+
