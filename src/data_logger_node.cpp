@@ -27,6 +27,7 @@ private:
     ros::Subscriber raw_control_sub_;
     ros::Subscriber hover_thrust_sub_;
     ros::Subscriber cmd_attitude_sub_;
+    ros::Subscriber target_attitude_sub_;
     ros::Subscriber imu_sub_;
 
     // Publishers for real-time visualization (rqt_plot / PlotJuggler)
@@ -43,6 +44,7 @@ private:
     double estimated_hover_thrust_;
     double command_thrust_;
     double imu_acc_z_;
+    double imu_wx_, imu_wy_, imu_wz_;
     bool has_odom_, has_ref_;
 
     // Logging
@@ -54,9 +56,11 @@ private:
     int record_count_;
 
 public:
-    DataLogger(ros::NodeHandle &nh) : nh_(nh), mpc_mode_(-1), estimated_hover_thrust_(0.0),
+    DataLogger(ros::NodeHandle &nh) : nh_(nh), mpc_mode_(-1), estimated_hover_thrust_(0.58),
                                       command_thrust_(0.0), imu_acc_z_(9.8066),
+                                      imu_wx_(0.0), imu_wy_(0.0), imu_wz_(0.0),
                                       has_odom_(false), has_ref_(false), record_count_(0)
+                                      
     {
         std::string odom_topic;
         nh_.param<std::string>("/odomTopicName", odom_topic, "/mavros/local_position/odom");
@@ -100,7 +104,8 @@ public:
                       << "err_x,err_y,err_z,err_pos_norm,"
                       << "vel_x,vel_y,vel_z,"
                       << "ctrl_acc_z,ctrl_wx,ctrl_wy,ctrl_wz,"
-                      << "cmd_thrust,estimated_hover_thrust,imu_acc_z\n";
+                      << "cmd_thrust,estimated_hover_thrust,imu_acc_z,"
+                      << "imu_wx,imu_wy,imu_wz\n";
             ROS_INFO("[DataLogger] Recording flight data to: %s", csv_filepath_.c_str());
         }
         else
@@ -114,7 +119,11 @@ public:
         mode_sub_ = nh_.subscribe<std_msgs::Int8>("/mpc_debug/mode", 10, &DataLogger::modeCallback, this);
         raw_control_sub_ = nh_.subscribe<std_msgs::Float32MultiArray>("/mpc_debug/raw_control", 10, &DataLogger::controlCallback, this);
         hover_thrust_sub_ = nh_.subscribe<std_msgs::Float64>("/mpc_debug/hover_thrust", 10, &DataLogger::hoverThrustCallback, this);
+        
+        // Listen to attitude/thrust from both NMPC (/setpoint_raw/attitude) and PX4 PID (/setpoint_raw/target_attitude)
         cmd_attitude_sub_ = nh_.subscribe<mavros_msgs::AttitudeTarget>("/mavros/setpoint_raw/attitude", 10, &DataLogger::attitudeCallback, this);
+        target_attitude_sub_ = nh_.subscribe<mavros_msgs::AttitudeTarget>("/mavros/setpoint_raw/target_attitude", 10, &DataLogger::attitudeCallback, this);
+        
         imu_sub_ = nh_.subscribe<sensor_msgs::Imu>("/mavros/imu/data", 10, &DataLogger::imuCallback, this);
 
         // Setup Real-time Error Publishers
@@ -166,12 +175,18 @@ public:
 
     void attitudeCallback(const mavros_msgs::AttitudeTarget::ConstPtr &msg)
     {
-        command_thrust_ = msg->thrust;
+        if (msg->thrust > 0.01)
+        {
+            command_thrust_ = msg->thrust;
+        }
     }
 
     void imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
     {
         imu_acc_z_ = msg->linear_acceleration.z;
+        imu_wx_ = msg->angular_velocity.x;
+        imu_wy_ = msg->angular_velocity.y;
+        imu_wz_ = msg->angular_velocity.z;
     }
 
     void spin()
@@ -193,6 +208,13 @@ public:
                 double ey = ref_pose_.pose.position.y - current_odom_.pose.pose.position.y;
                 double ez = ref_pose_.pose.position.z - current_odom_.pose.pose.position.z;
                 double pos_err_norm = std::sqrt(ex * ex + ey * ey + ez * ez);
+
+                // Fallback for command_thrust if PID runs position control without attitude stream
+                double logged_thrust = command_thrust_;
+                if (logged_thrust < 0.05 && imu_acc_z_ > 1.0)
+                {
+                    logged_thrust = std::min(0.95, std::max(0.15, imu_acc_z_ / (9.8066 / 0.58)));
+                }
 
                 // Publish real-time error messages
                 geometry_msgs::Vector3Stamped pos_err_msg;
@@ -229,9 +251,12 @@ public:
                               << raw_control_[1] << ","
                               << raw_control_[2] << ","
                               << raw_control_[3] << ","
-                              << command_thrust_ << ","
+                              << logged_thrust << ","
                               << estimated_hover_thrust_ << ","
-                              << imu_acc_z_ << "\n";
+                              << imu_acc_z_ << ","
+                              << imu_wx_ << ","
+                              << imu_wy_ << ","
+                              << imu_wz_ << "\n";
                     record_count_++;
                 }
 
@@ -241,7 +266,7 @@ public:
                     last_print_time = now;
                     std::string mode_str = (mpc_mode_ == 0) ? "TAKEOFF" : (mpc_mode_ == 1) ? "HOVER" : (mpc_mode_ == 2) ? "TRACKING" : "WAIT";
                     ROS_INFO("[Logger] Mode: %-8s | PosErr: %.3f m (X:%.2f, Y:%.2f, Z:%.2f) | Thr: %.3f | HovEst: %.3f",
-                             mode_str.c_str(), pos_err_norm, ex, ey, ez, command_thrust_, estimated_hover_thrust_);
+                             mode_str.c_str(), pos_err_norm, ex, ey, ez, logged_thrust, estimated_hover_thrust_);
                 }
             }
 

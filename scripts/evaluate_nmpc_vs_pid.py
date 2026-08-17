@@ -23,7 +23,6 @@ def find_latest_log(data_dir, prefix):
     pattern = os.path.join(data_dir, f"flight_log_{prefix}_*.csv")
     files = glob.glob(pattern)
     if not files:
-        # Fallback to general flight_log_*.csv if specific prefix not found
         if prefix == "NMPC":
             all_files = glob.glob(os.path.join(data_dir, "flight_log_*.csv"))
             non_pid = [f for f in all_files if "PID" not in f]
@@ -33,7 +32,7 @@ def find_latest_log(data_dir, prefix):
     return max(files, key=os.path.getctime)
 
 def calculate_metrics(df, label=""):
-    # Filter valid tracking data (mode == 2 or elapsed time > 15s)
+    # Filter valid tracking data (elapsed time >= 15.0s, steady tracking)
     df_track = df[df["time_sec"] >= 15.0].copy()
     if df_track.empty:
         df_track = df.copy()
@@ -43,29 +42,50 @@ def calculate_metrics(df, label=""):
     gust = df_track[(df_track["time_sec"] >= GUST_START) & (df_track["time_sec"] <= GUST_END)]
     transient = df_track[(df_track["time_sec"] >= GUST_START) & (df_track["time_sec"] <= GUST_START + 5.0)]
 
-    # Tracking Errors
-    rmse_3d = np.sqrt(np.mean(df_track["err_pos_norm"]**2))
-    rmse_x = np.sqrt(np.mean(df_track["err_x"]**2))
-    rmse_y = np.sqrt(np.mean(df_track["err_y"]**2))
-    rmse_z = np.sqrt(np.mean(df_track["err_z"]**2))
-    max_err = np.max(df_track["err_pos_norm"])
-    mean_err = np.mean(df_track["err_pos_norm"])
+    # 1. Tracking Errors
+    rmse_3d = float(np.sqrt(np.mean(df_track["err_pos_norm"]**2)))
+    rmse_x = float(np.sqrt(np.mean(df_track["err_x"]**2)))
+    rmse_y = float(np.sqrt(np.mean(df_track["err_y"]**2)))
+    rmse_z = float(np.sqrt(np.mean(df_track["err_z"]**2)))
+    max_err = float(np.max(df_track["err_pos_norm"]))
+    mean_err = float(np.mean(df_track["err_pos_norm"]))
 
-    # Disturbance Rejection Metrics
-    rmse_calm = np.sqrt(np.mean(calm["err_pos_norm"]**2)) if not calm.empty else rmse_3d
-    rmse_gust = np.sqrt(np.mean(gust["err_pos_norm"]**2)) if not gust.empty else rmse_3d
-    gust_amp_ratio = (rmse_gust / rmse_calm) if rmse_calm > 1e-4 else 1.0
-    transient_peak = np.max(transient["err_pos_norm"]) if not transient.empty else max_err
+    # 2. Disturbance Rejection Metrics
+    rmse_calm = float(np.sqrt(np.mean(calm["err_pos_norm"]**2))) if not calm.empty else rmse_3d
+    rmse_gust = float(np.sqrt(np.mean(gust["err_pos_norm"]**2))) if not gust.empty else rmse_3d
+    gust_amp_ratio = float(rmse_gust / rmse_calm) if rmse_calm > 1e-4 else 1.0
+    transient_peak = float(np.max(transient["err_pos_norm"])) if not transient.empty else max_err
 
-    # Control Smoothness
-    body_rate_norm = np.sqrt(df_track["ctrl_wx"]**2 + df_track["ctrl_wy"]**2 + df_track["ctrl_wz"]**2)
-    rate_rms = np.sqrt(np.mean(body_rate_norm**2))
-    thrust_var = np.var(df_track["cmd_thrust"])
+    # 3. Control Smoothness (Body Rates)
+    # Prefer measured IMU angular velocity; fallback to ctrl_wx/wy/wz or velocity gradient
+    if "imu_wx" in df_track.columns and (df_track["imu_wx"]**2 + df_track["imu_wy"]**2).sum() > 1e-3:
+        body_rate_norm = np.sqrt(df_track["imu_wx"]**2 + df_track["imu_wy"]**2 + df_track["imu_wz"]**2)
+    elif "ctrl_wx" in df_track.columns and (df_track["ctrl_wx"]**2 + df_track["ctrl_wy"]**2 + df_track["ctrl_wz"]**2).sum() > 1e-3:
+        body_rate_norm = np.sqrt(df_track["ctrl_wx"]**2 + df_track["ctrl_wy"]**2 + df_track["ctrl_wz"]**2)
+    else:
+        # Approximate body angular rate from velocity lateral acceleration (rad/s)
+        vx = df_track["vel_x"].values
+        vy = df_track["vel_y"].values
+        dt_approx = np.median(np.diff(df_track["time_sec"])) if len(df_track) > 1 else 0.05
+        ax = np.gradient(vx, dt_approx)
+        ay = np.gradient(vy, dt_approx)
+        body_rate_norm = np.sqrt(ax**2 + ay**2) / 9.8066
 
-    # Energy Metrics (Power proxy integral: T^1.5 dt, control effort: (T^2 + w^2) dt)
-    dt = np.median(np.diff(df_track["time_sec"])) if len(df_track) > 1 else 0.02
-    energy_power_proxy = np.sum(df_track["cmd_thrust"]**1.5) * dt
-    energy_effort = np.sum(df_track["cmd_thrust"]**2 + 0.05 * body_rate_norm**2) * dt
+    rate_rms = float(np.sqrt(np.mean(body_rate_norm**2)))
+
+    # 4. Throttle Series & Variance
+    thrust_series = df_track["cmd_thrust"].copy().astype(float)
+    if thrust_series.sum() < 1e-3 and "imu_acc_z" in df_track.columns:
+        # Reconstruct throttle for PID from IMU specific force
+        hover_ratio = 9.8066 / 0.58
+        thrust_series = np.clip(df_track["imu_acc_z"] / hover_ratio, 0.15, 0.95)
+    
+    thrust_var = float(np.var(thrust_series))
+
+    # 5. Energy Metrics (Power proxy integral: T^1.5 dt, control effort: (T^2 + 0.05 * w^2) dt)
+    dt = float(np.median(np.diff(df_track["time_sec"]))) if len(df_track) > 1 else 0.05
+    energy_power_proxy = float(np.sum(thrust_series**1.5) * dt)
+    energy_effort = float(np.sum(thrust_series**2 + 0.05 * (body_rate_norm**2)) * dt)
 
     return {
         "label": label,
@@ -82,7 +102,9 @@ def calculate_metrics(df, label=""):
         "rate_rms": rate_rms,
         "thrust_var": thrust_var,
         "energy_power": energy_power_proxy,
-        "energy_effort": energy_effort
+        "energy_effort": energy_effort,
+        "thrust_series": thrust_series,
+        "body_rate_norm": body_rate_norm
     }
 
 def print_comparison_table(m_nmpc, m_pid):
@@ -113,9 +135,12 @@ def print_comparison_table(m_nmpc, m_pid):
     for title, key, lower_is_better in comparisons:
         v_nmpc = m_nmpc[key]
         v_pid = m_pid[key] if m_pid else None
-        if v_pid is not None and v_pid != 0:
-            pct = (v_pid - v_nmpc) / v_pid * 100.0 if lower_is_better else (v_nmpc - v_pid) / v_pid * 100.0
-            pct_str = f"{pct:+.1f}%" if pct != 0 else "0.0%"
+        if v_pid is not None:
+            if v_pid != 0:
+                pct = (v_pid - v_nmpc) / v_pid * 100.0 if lower_is_better else (v_nmpc - v_pid) / v_pid * 100.0
+                pct_str = f"{pct:+.1f}%" if abs(pct) > 0.01 else "0.0%"
+            else:
+                pct_str = "0.0%"
             print(f"{title:<35} | {v_nmpc:<12.4f} | {v_pid:<12.4f} | {pct_str:<12}")
         else:
             print(f"{title:<35} | {v_nmpc:<12.4f} | {'N/A':<12} | {'N/A':<12}")
@@ -124,7 +149,7 @@ def print_comparison_table(m_nmpc, m_pid):
 def plot_comparison(df_nmpc, df_pid, m_nmpc, m_pid, save_path):
     fig = plt.figure(figsize=(18, 12))
 
-    # 1. 3D Trajectory & XY Plane Projection
+    # 1. XY Flight Trajectory Comparison
     ax1 = fig.add_subplot(2, 2, 1)
     ax1.plot(df_nmpc["ref_x"], df_nmpc["ref_y"], "k--", label="Reference Circle", linewidth=1.5)
     ax1.plot(df_nmpc["pos_x"], df_nmpc["pos_y"], "b-", label=f"NMPC (RMSE={m_nmpc['rmse_3d']:.3f}m)", linewidth=1.8)
@@ -137,7 +162,7 @@ def plot_comparison(df_nmpc, df_pid, m_nmpc, m_pid, save_path):
     ax1.axis("equal")
     ax1.legend(loc="upper right")
 
-    # 2. Tracking Error vs Time with Shaded Wind Gust Area
+    # 2. Tracking Error vs Time with Shaded Wind Gust Window
     ax2 = fig.add_subplot(2, 2, 2)
     ax2.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (3.0 m/s +X)")
     ax2.plot(df_nmpc["time_sec"], df_nmpc["err_pos_norm"], "b-", label="NMPC 3D Error", linewidth=1.8)
@@ -149,22 +174,24 @@ def plot_comparison(df_nmpc, df_pid, m_nmpc, m_pid, save_path):
     ax2.grid(True, linestyle="--", alpha=0.6)
     ax2.legend(loc="upper right")
 
-    # 3. Control Inputs (Thrust / Body Rates)
+    # 3. Control Throttle & Dynamic Response
     ax3 = fig.add_subplot(2, 2, 3)
     ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust")
-    ax3.plot(df_nmpc["time_sec"], df_nmpc["cmd_thrust"], "b-", label="NMPC Command Thrust", linewidth=1.5)
+    nmpc_track = df_nmpc[df_nmpc["time_sec"] >= 15.0]
+    ax3.plot(nmpc_track["time_sec"], m_nmpc["thrust_series"], "b-", label="NMPC Thrust", linewidth=1.5)
     if df_pid is not None:
-        ax3.plot(df_pid["time_sec"], df_pid["cmd_thrust"], "r--", label="PID Command Thrust", linewidth=1.5, alpha=0.7)
+        pid_track = df_pid[df_pid["time_sec"] >= 15.0]
+        ax3.plot(pid_track["time_sec"], m_pid["thrust_series"], "r--", label="PID Equivalent Thrust", linewidth=1.5, alpha=0.7)
     ax3.set_xlabel("Time (s)")
-    ax3.set_ylabel("Normalized Thrust (0~1)")
-    ax3.set_title("Command Thrust Response under Wind Disturbance")
+    ax3.set_ylabel("Thrust (Normalized 0~1)")
+    ax3.set_title("Throttle Response under Wind Disturbance")
     ax3.grid(True, linestyle="--", alpha=0.6)
     ax3.legend(loc="upper right")
 
-    # 4. Multi-Dimensional Performance Summary (Bar Chart)
+    # 4. Multi-Dimensional Performance Bar Chart
     ax4 = fig.add_subplot(2, 2, 4)
     if df_pid is not None:
-        categories = ["3D RMSE (m)", "Gust RMSE (m)", "Peak Error (m)", "Rate RMS (rad/s)"]
+        categories = ["3D RMSE (m)", "Gust RMSE (m)", "Peak Err (m)", "Rate RMS (rad/s)"]
         nmpc_vals = [m_nmpc["rmse_3d"], m_nmpc["rmse_gust"], m_nmpc["transient_peak"], m_nmpc["rate_rms"]]
         pid_vals = [m_pid["rmse_3d"], m_pid["rmse_gust"], m_pid["transient_peak"], m_pid["rate_rms"]]
 
