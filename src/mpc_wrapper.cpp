@@ -20,14 +20,14 @@ MPCWrapper::MPCWrapper(ros::NodeHandle &nh):nh(nh)
   nh.getParam("/cost/cost_wx", cost_wx); 
   nh.getParam("/cost/cost_wy", cost_wy); 
   nh.getParam("/cost/cost_wz", cost_wz); 
-  nh.getParam("/boudings/T_max", T_max); 
-  nh.getParam("/boudings/T_min", T_min); 
-  nh.getParam("/boudings/wx_max", wx_max); 
-  nh.getParam("/boudings/wx_min", wx_min); 
-  nh.getParam("/boudings/wy_max", wy_max); 
-  nh.getParam("/boudings/wy_min", wy_min); 
-  nh.getParam("/boudings/wz_max", wz_max); 
-  nh.getParam("/boudings/wz_min", wz_min); 
+  if(!nh.getParam("/boundings/T_max", T_max)) nh.param<double>("/boudings/T_max", T_max, 20.0); 
+  if(!nh.getParam("/boundings/T_min", T_min)) nh.param<double>("/boudings/T_min", T_min, 2.0); 
+  if(!nh.getParam("/boundings/wx_max", wx_max)) nh.param<double>("/boudings/wx_max", wx_max, 1.5); 
+  if(!nh.getParam("/boundings/wx_min", wx_min)) nh.param<double>("/boudings/wx_min", wx_min, -1.5); 
+  if(!nh.getParam("/boundings/wy_max", wy_max)) nh.param<double>("/boudings/wy_max", wy_max, 1.5); 
+  if(!nh.getParam("/boundings/wy_min", wy_min)) nh.param<double>("/boudings/wy_min", wy_min, -1.5); 
+  if(!nh.getParam("/boundings/wz_max", wz_max)) nh.param<double>("/boudings/wz_max", wz_max, 1.0); 
+  if(!nh.getParam("/boundings/wz_min", wz_min)) nh.param<double>("/boudings/wz_min", wz_min, -1.0); 
 
   pub_pred_path = nh.advertise<nav_msgs::Path>("/mpc_debug/acado_pred_path", 1);
   pub_ref_path = nh.advertise<nav_msgs::Path>("/mpc_debug/acado_ref_path", 1);
@@ -100,16 +100,14 @@ bool MPCWrapper::initSolver(nav_msgs::Odometry& msg)
   /* Initialize the Boundings. */
   for(int i = 0; i < N; ++i)
   {
-    // std::cout << "max" << acadoVariables.ubValues[i] << std::endl;
-    // std::cout << "min" << acadoVariables.lbValues[i] << std::endl;
-	  acadoVariables.ubValues[i * NU + 0] = 12;
-    acadoVariables.lbValues[i * NU + 0] = 2;
-    acadoVariables.ubValues[i * NU + 1] = 1.5;
-    acadoVariables.lbValues[i * NU + 1] = -1.5;
-    acadoVariables.ubValues[i * NU + 2] = 1.5;
-    acadoVariables.lbValues[i * NU + 2] = -1.5;
-    acadoVariables.ubValues[i * NU + 3] = 1;
-    acadoVariables.lbValues[i * NU + 3] = -1;
+    acadoVariables.ubValues[i * NU + 0] = T_max;
+    acadoVariables.lbValues[i * NU + 0] = T_min;
+    acadoVariables.ubValues[i * NU + 1] = wx_max;
+    acadoVariables.lbValues[i * NU + 1] = wx_min;
+    acadoVariables.ubValues[i * NU + 2] = wy_max;
+    acadoVariables.lbValues[i * NU + 2] = wy_min;
+    acadoVariables.ubValues[i * NU + 3] = wz_max;
+    acadoVariables.lbValues[i * NU + 3] = wz_min;
   }
 
   /* Prepare first step */
