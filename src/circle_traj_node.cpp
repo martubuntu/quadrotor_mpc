@@ -13,6 +13,45 @@
 #define DEFAULT_KSAMPLE 20
 #define DEFAULT_T_STEP 0.1
 
+// 1D Quintic Polynomial for C2 continuous trajectory generation
+struct Quintic1D
+{
+    double c0, c1, c2, c3, c4, c5;
+
+    void compute(double x0, double v0, double a0,
+                 double xf, double vf, double af,
+                 double T)
+    {
+        c0 = x0;
+        c1 = v0;
+        c2 = 0.5 * a0;
+        double T2 = T * T;
+        double T3 = T2 * T;
+        double T4 = T3 * T;
+        double T5 = T4 * T;
+
+        double h = xf - x0 - v0 * T - 0.5 * a0 * T2;
+        double v_diff = vf - v0 - a0 * T;
+        double a_diff = af - a0;
+
+        c3 = (10.0 * h - 4.0 * v_diff * T + 0.5 * a_diff * T2) / T3;
+        c4 = (-15.0 * h + 7.0 * v_diff * T - a_diff * T2) / T4;
+        c5 = (6.0 * h - 3.0 * v_diff * T + 0.5 * a_diff * T2) / T5;
+    }
+
+    void eval(double t, double &x, double &v, double &a) const
+    {
+        double t2 = t * t;
+        double t3 = t2 * t;
+        double t4 = t3 * t;
+        double t5 = t4 * t;
+
+        x = c0 + c1 * t + c2 * t2 + c3 * t3 + c4 * t4 + c5 * t5;
+        v = c1 + 2.0 * c2 * t + 3.0 * c3 * t2 + 4.0 * c4 * t3 + 5.0 * c5 * t4;
+        a = 2.0 * c2 + 6.0 * c3 * t + 12.0 * c4 * t2 + 20.0 * c5 * t3;
+    }
+};
+
 class CircleTrajGenerator
 {
 private:
@@ -26,7 +65,6 @@ private:
     double height_;
     double omega_;
     int cycles_;
-    double transition_time_;
     double publish_rate_;
     int k_sample_;
     double t_step_;
@@ -35,15 +73,12 @@ private:
     double center_x_;
     double center_y_;
     double center_z_;
+    double transition_time_;
+    double total_circle_duration_;
 
-    // Quintic polynomial coefficients for smooth transition from center to circle entry point
-    Eigen::Vector3d p0_, pf_;
-    Eigen::Vector3d v0_, vf_;
-    Eigen::Vector3d a0_, af_;
-    Eigen::Matrix<double, 6, 3> poly_coeffs_; // [c0, c1, c2, c3, c4, c5] for x, y, z
-
-    double total_orbit_duration_;
-    double total_mission_duration_;
+    Quintic1D poly_x_;
+    Quintic1D poly_y_;
+    Quintic1D poly_z_;
 
 public:
     CircleTrajGenerator(ros::NodeHandle &nh) : nh_(nh)
@@ -52,159 +87,93 @@ public:
         nh_.param<double>("radius", radius_, 1.5);
         nh_.param<double>("linear_vel", linear_vel_, 0.8);
         nh_.param<double>("height", height_, 1.5);
-        nh_.param<double>("transition_time", transition_time_, 3.5); // Seconds to smoothly fly from center to entry point
-        nh_.param<int>("cycles", cycles_, 15);                      // >0: number of cycles, -1: infinite
+        nh_.param<int>("cycles", cycles_, 15);
         nh_.param<double>("publish_rate", publish_rate_, 50.0);
         nh_.param<int>("k_sample", k_sample_, DEFAULT_KSAMPLE);
         nh_.param<double>("t_step", t_step_, DEFAULT_T_STEP);
+        nh_.param<double>("transition_time", transition_time_, 3.0); // 3 seconds smooth transition from center to perimeter
         nh_.param<std::string>("odom_topic", odom_topic_, "/mavros/local_position/odom");
 
-        bool use_fixed_center;
-        double fixed_cx, fixed_cy;
-        nh_.param<bool>("use_fixed_center", use_fixed_center, false);
-        nh_.param<double>("center_x", fixed_cx, 0.0);
-        nh_.param<double>("center_y", fixed_cy, 0.0);
-
         if (radius_ <= 0.05) radius_ = 0.05;
-        if (transition_time_ <= 0.5) transition_time_ = 0.5;
-
         omega_ = linear_vel_ / radius_;
-        total_orbit_duration_ = (cycles_ > 0) ? (2.0 * M_PI * cycles_ / omega_) : 1e9;
-        total_mission_duration_ = transition_time_ + total_orbit_duration_;
+        total_circle_duration_ = (cycles_ > 0) ? (transition_time_ + 2.0 * M_PI * cycles_ / omega_) : 1e9;
 
         mpc_ref_pub_ = nh_.advertise<quadrotor_msgs::mpc_ref_traj>("/mpc_ref_traj", 1);
         debug_ref_path_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/circle_traj/current_ref", 1);
 
-        ROS_INFO("[CircleTraj] Waiting for vehicle odometry on %s...", odom_topic_.c_str());
+        // 1. 读取初始悬停位置作为圆心 (Center)
+        ROS_INFO("[CircleTraj] Waiting for vehicle odometry on %s to set circle center...", odom_topic_.c_str());
         nav_msgs::OdometryConstPtr odom = ros::topic::waitForMessage<nav_msgs::Odometry>(
             odom_topic_, nh_, ros::Duration(5.0));
 
-        double x_hover = 0.0, y_hover = 0.0, z_hover = height_;
         if (odom)
         {
-            x_hover = odom->pose.pose.position.x;
-            y_hover = odom->pose.pose.position.y;
-            z_hover = odom->pose.pose.position.z;
-            ROS_INFO("[CircleTraj] Received current hover pose: (%.2f, %.2f, %.2f)", x_hover, y_hover, z_hover);
+            center_x_ = odom->pose.pose.position.x;
+            center_y_ = odom->pose.pose.position.y;
+            center_z_ = (height_ > 0.3) ? height_ : odom->pose.pose.position.z;
+            ROS_INFO("[CircleTraj] Hover position locked as circle center: Center (%.2f, %.2f, %.2f)", center_x_, center_y_, center_z_);
         }
         else
         {
-            ROS_WARN("[CircleTraj] No odometry received within 5s, using default (0.0, 0.0, %.2f)", height_);
+            center_x_ = 0.0;
+            center_y_ = 0.0;
+            center_z_ = height_;
+            ROS_WARN("[CircleTraj] Odometry timeout, using default center: (0.0, 0.0, %.2f)", height_);
         }
 
-        // 1. 设置【悬停点为圆心】
-        if (use_fixed_center)
-        {
-            center_x_ = fixed_cx;
-            center_y_ = fixed_cy;
-            center_z_ = (height_ > 0.3) ? height_ : z_hover;
-        }
-        else
-        {
-            center_x_ = x_hover;
-            center_y_ = y_hover;
-            center_z_ = (height_ > 0.3) ? height_ : z_hover;
-        }
+        // 2. 初始化从圆心 (center_x, center_y) 到圆周固定切入点 (center_x + R, center_y) 的五次多项式平滑切入曲线
+        // 边界条件：
+        // 起点 t=0 (圆心): pos=(cx, cy, cz), vel=(0, 0, 0), acc=(0, 0, 0)
+        // 终点 t=T_trans (圆周起点): pos=(cx + R, cy, cz), vel=(0, R*omega, 0), acc=(-R*omega^2, 0, 0) (与圆周切向速度和向心加速度严格连续匹配)
+        poly_x_.compute(center_x_, 0.0, 0.0,
+                        center_x_ + radius_, 0.0, -radius_ * omega_ * omega_,
+                        transition_time_);
 
-        // 2. 规划【从圆心到固定切入点的五次平滑多项式】
-        // 初始状态（圆心悬停）：p0 = [cx, cy, cz], v0 = 0, a0 = 0
-        p0_ << center_x_, center_y_, center_z_;
-        v0_ << 0.0, 0.0, 0.0;
-        a0_ << 0.0, 0.0, 0.0;
+        poly_y_.compute(center_y_, 0.0, 0.0,
+                        center_y_, radius_ * omega_, 0.0,
+                        transition_time_);
 
-        // 目标切入点（固定在 +X 轴切入）：pf = [cx + R, cy, cz]
-        // 目标切入速度（正切方向 +Y）：vf = [0, R * omega, 0]
-        // 目标向心加速度（指向圆心 -X）：af = [-R * omega^2, 0, 0]
-        pf_ << center_x_ + radius_, center_y_, center_z_;
-        vf_ << 0.0, radius_ * omega_, 0.0;
-        af_ << -radius_ * omega_ * omega_, 0.0, 0.0;
+        poly_z_.compute(center_z_, 0.0, 0.0,
+                        center_z_, 0.0, 0.0,
+                        transition_time_);
 
-        computeQuinticPolynomial();
-
-        ROS_INFO("================================================================================");
-        ROS_INFO("[CircleTraj] Initialized: Center LOCKED at Hover Pose (%.2f, %.2f, %.2f)", center_x_, center_y_, center_z_);
-        ROS_INFO("[CircleTraj] Fixed Entry Point: (%.2f, %.2f, %.2f) | Radius: %.2fm | Vel: %.2fm/s", pf_.x(), pf_.y(), pf_.z(), radius_, linear_vel_);
-        ROS_INFO("[CircleTraj] Smooth Transition: %.1fs (Center -> Entry Point) | Total Orbit: %d cycles (%.1fs)", transition_time_, cycles_, total_orbit_duration_);
-        ROS_INFO("================================================================================");
+        ROS_INFO("[CircleTraj] Trajectory Config: Center(%.2f, %.2f, %.2f) -> Transition to Perimeter Start(%.2f, %.2f, %.2f) in %.1fs -> Circling (R=%.2fm, V=%.2fm/s, Omega=%.3frad/s, Cycles=%d)",
+                 center_x_, center_y_, center_z_, center_x_ + radius_, center_y_, center_z_, transition_time_, radius_, linear_vel_, omega_, cycles_);
     }
 
-    void computeQuinticPolynomial()
+    void evaluateTraj(double t_query, Eigen::Vector3d &p, Eigen::Vector3d &v, Eigen::Vector3d &a)
     {
-        double T = transition_time_;
-        for (int k = 0; k < 3; ++k)
+        if (t_query <= 0.0)
         {
-            double dp = pf_[k] - p0_[k];
-            double V = vf_[k] * T;
-            double A = af_[k] * T * T;
-
-            double c0 = p0_[k];
-            double c1 = 0.0;
-            double c2 = 0.0;
-            double c3 = 10.0 * dp - 4.0 * V + 0.5 * A;
-            double c4 = -15.0 * dp + 7.0 * V - 1.0 * A;
-            double c5 = 6.0 * dp - 3.0 * V + 0.5 * A;
-
-            poly_coeffs_(0, k) = c0;
-            poly_coeffs_(1, k) = c1;
-            poly_coeffs_(2, k) = c2;
-            poly_coeffs_(3, k) = c3;
-            poly_coeffs_(4, k) = c4;
-            poly_coeffs_(5, k) = c5;
-        }
-    }
-
-    void evaluateTrajectory(double t_query, Eigen::Vector3d &p, Eigen::Vector3d &v, Eigen::Vector3d &a)
-    {
-        if (t_query < 0.0)
-        {
-            // 阶段 0：尚未启动，保持在圆心悬停
-            p = p0_;
-            v = v0_;
-            a = a0_;
+            // 阶段 0：未启动前，保持在初始悬停圆心点
+            p << center_x_, center_y_, center_z_;
+            v << 0.0, 0.0, 0.0;
+            a << 0.0, 0.0, 0.0;
         }
         else if (t_query < transition_time_)
         {
-            // 阶段 1：平滑过渡（从圆心平滑飞到固定切入点，匹配正切速度与向心加速度）
-            double tau = t_query / transition_time_;
-            double tau2 = tau * tau;
-            double tau3 = tau2 * tau;
-            double tau4 = tau3 * tau;
-            double tau5 = tau4 * tau;
-            double T = transition_time_;
+            // 阶段 1：平滑切入阶段 (0s ~ transition_time_): 从圆心飞往固定圆周起点 (cx + R, cy)
+            double px, py, pz, vx, vy, vz, ax, ay, az;
+            poly_x_.eval(t_query, px, vx, ax);
+            poly_y_.eval(t_query, py, vy, ay);
+            poly_z_.eval(t_query, pz, vz, az);
 
-            for (int k = 0; k < 3; ++k)
-            {
-                p[k] = poly_coeffs_(0, k) +
-                       poly_coeffs_(1, k) * tau +
-                       poly_coeffs_(2, k) * tau2 +
-                       poly_coeffs_(3, k) * tau3 +
-                       poly_coeffs_(4, k) * tau4 +
-                       poly_coeffs_(5, k) * tau5;
-
-                v[k] = (poly_coeffs_(1, k) +
-                        2.0 * poly_coeffs_(2, k) * tau +
-                        3.0 * poly_coeffs_(3, k) * tau2 +
-                        4.0 * poly_coeffs_(4, k) * tau3 +
-                        5.0 * poly_coeffs_(5, k) * tau4) / T;
-
-                a[k] = (2.0 * poly_coeffs_(2, k) +
-                        6.0 * poly_coeffs_(3, k) * tau +
-                        12.0 * poly_coeffs_(4, k) * tau2 +
-                        20.0 * poly_coeffs_(5, k) * tau3) / (T * T);
-            }
+            p << px, py, pz;
+            v << vx, vy, vz;
+            a << ax, ay, az;
         }
-        else if (cycles_ > 0 && t_query >= total_mission_duration_)
+        else if (cycles_ > 0 && t_query >= total_circle_duration_)
         {
-            // 阶段 3：完成指定圈数，稳定保持在固定切入点
-            p = pf_;
+            // 阶段 3：完成所有圈数后，在终点悬停
+            p << center_x_ + radius_, center_y_, center_z_;
             v << 0.0, 0.0, 0.0;
             a << 0.0, 0.0, 0.0;
         }
         else
         {
-            // 阶段 2：以固定圆心平稳绕圆飞行
-            double t_orbit = t_query - transition_time_;
-            double theta = omega_ * t_orbit;
+            // 阶段 2：以 (cx, cy) 为圆心稳定绕圆 (theta 从 0 持续递增)
+            double t_circle = t_query - transition_time_;
+            double theta = omega_ * t_circle;
 
             p << center_x_ + radius_ * std::cos(theta),
                  center_y_ + radius_ * std::sin(theta),
@@ -223,7 +192,8 @@ public:
     void run()
     {
         ros::Rate rate(publish_rate_);
-        ros::Duration(0.5).sleep(); // 确保 subscriber 建立连接
+        // 短暂延时确保 subscriber 建立连接
+        ros::Duration(0.5).sleep();
         ros::Time node_start = ros::Time::now();
 
         while (ros::ok())
@@ -239,7 +209,7 @@ public:
             {
                 double query_t = t_active + i * t_step_;
                 Eigen::Vector3d p, v, a;
-                evaluateTrajectory(query_t, p, v, a);
+                evaluateTraj(query_t, p, v, a);
 
                 quadrotor_msgs::mpc_ref_point point_msg;
                 point_msg.position.x = p[0];

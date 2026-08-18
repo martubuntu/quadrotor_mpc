@@ -57,7 +57,7 @@ def main():
     plt.plot(t, df["err_y"], label="Err Y (m)", alpha=0.8)
     plt.plot(t, df["err_z"], label="Err Z (m)", alpha=0.8)
     plt.plot(t, df["err_pos_norm"], "k-", label="3D Error Norm (m)", linewidth=1.8)
-    plt.axvspan(90.0, 120.0, color="orange", alpha=0.2, label="Wind Gust Window")
+    plt.axvspan(45.0, 75.0, color="orange", alpha=0.2, label="Wind Gust Window (45~75s)")
     plt.xlabel("Time (s)")
     plt.ylabel("Position Error (m)")
     plt.title("Position Tracking Errors")
@@ -72,7 +72,7 @@ def main():
         plt.plot(t, df["yaw_deg"], "b-", label="Yaw (°)", alpha=0.6)
         if "ref_pitch_deg" in df.columns:
             plt.plot(t, df["ref_pitch_deg"], "g--", label="Ref Pitch (°)", alpha=0.5)
-    plt.axvspan(90.0, 120.0, color="orange", alpha=0.2)
+    plt.axvspan(45.0, 75.0, color="orange", alpha=0.2)
     plt.xlabel("Time (s)")
     plt.ylabel("Angle (deg)")
     plt.title("Euler Angles (Roll, Pitch, Yaw)")
@@ -109,7 +109,7 @@ def main():
         plt.plot(t, df["eso_dz"], "b-", label="d_hat_z (m/s²)", linewidth=1.5)
         d_norm = np.sqrt(df["eso_dx"]**2 + df["eso_dy"]**2 + df["eso_dz"]**2)
         plt.plot(t, d_norm, "k--", label="|d_hat| (m/s²)", linewidth=1.5)
-        plt.axvspan(90.0, 120.0, color="orange", alpha=0.2, label="Wind Gust")
+        plt.axvspan(45.0, 75.0, color="orange", alpha=0.2, label="Wind Gust Window (45~75s)")
         plt.title("ESO Wind Disturbance Estimation")
     else:
         plt.text(0.5, 0.5, "No ESO Disturbance Data", ha="center", va="center")

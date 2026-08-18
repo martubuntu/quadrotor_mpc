@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Academic Multi-Dimensional Benchmark & 3-Page Publication Plotter
-NMPC + ESO vs NMPC vs PID Baseline (Simulation under Wind Gust 90s~120s, 3.0 m/s +X)
+NMPC + ESO vs NMPC vs PID Baseline (Simulation under Wind Gust 45s~75s, 3.0 m/s +X)
 
 Output Figures:
   1. eval_page1_trajectory_tracking.png       (Page 1: Trajectory Tracking & Spatial Error Analysis)
@@ -20,8 +20,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-GUST_START = 90.0
-GUST_END = 120.0
+GUST_START = 45.0
+GUST_END = 75.0
 
 def find_latest_log(data_dir, prefix):
     pattern = os.path.join(data_dir, f"flight_log_{prefix}_*.csv")
@@ -36,13 +36,13 @@ def find_latest_log(data_dir, prefix):
     return max(files, key=os.path.getctime)
 
 def calculate_metrics(df, label=""):
-    # Filter valid tracking data (elapsed time >= 15.0s, steady tracking)
-    df_track = df[df["time_sec"] >= 15.0].copy()
+    # Filter valid tracking data (elapsed time >= 10.0s, steady tracking)
+    df_track = df[df["time_sec"] >= 10.0].copy()
     if df_track.empty:
         df_track = df.copy()
 
     # Time segments
-    calm = df_track[(df_track["time_sec"] >= 20.0) & (df_track["time_sec"] < GUST_START)]
+    calm = df_track[(df_track["time_sec"] >= 10.0) & (df_track["time_sec"] < GUST_START)]
     gust = df_track[(df_track["time_sec"] >= GUST_START) & (df_track["time_sec"] <= GUST_END)]
     gust_steady = df_track[(df_track["time_sec"] >= GUST_START + 5.0) & (df_track["time_sec"] <= GUST_END - 5.0)]
     transient = df_track[(df_track["time_sec"] >= GUST_START) & (df_track["time_sec"] <= GUST_START + 5.0)]
@@ -78,7 +78,7 @@ def calculate_metrics(df, label=""):
         gust_ss_bias_x = float(np.mean(np.abs(gust["err_x"]))) if not gust.empty else rmse_x
         gust_ss_bias_3d = float(np.mean(gust["err_pos_norm"])) if not gust.empty else rmse_3d
 
-    # IAE & ITAE Integral Error Criteria during Gust Phase (90s ~ 120s)
+    # IAE & ITAE Integral Error Criteria during Gust Phase (45s ~ 75s)
     if not gust.empty and len(gust) > 2:
         t_gust = gust["time_sec"].values
         dt_gust = np.diff(t_gust)
@@ -162,7 +162,7 @@ def calculate_metrics(df, label=""):
 def print_comparison_table(m_eso, m_nmpc, m_pid):
     print("\n" + "="*100)
     print("      ACADEMIC MULTI-DIMENSIONAL BENCHMARK REPORT: NMPC+ESO vs NMPC vs PID")
-    print("      Wind Gust: 90s - 120s (+X 3.0 m/s) | Circle Radius: 1.5m, Vel: 0.8m/s")
+    print("      Wind Gust: 45s - 75s (+X 3.0 m/s) | Circle Radius: 1.5m, Vel: 0.8m/s")
     print("="*100)
 
     headers = f"{'Evaluation Metric Category':<34} | {'NMPC + ESO':<12} | {'NMPC (Pure)':<12} | {'PID Baseline':<12} | {'ESO vs PID':<10}"
@@ -185,8 +185,8 @@ def print_comparison_table(m_eso, m_nmpc, m_pid):
 
         ("--- 3. Wind Rejection & ESO Superiority ---", None),
         ("Gust Steady-State Bias X (m)", "gust_ss_bias_x"),
-        ("Gust Phase 3D RMSE (90-120s) (m)", "rmse_gust"),
-        ("Calm Phase 3D RMSE (20-90s) (m)", "rmse_calm"),
+        ("Gust Phase 3D RMSE (45-75s) (m)", "rmse_gust"),
+        ("Calm Phase 3D RMSE (10-45s) (m)", "rmse_calm"),
         ("Gust Degradation Ratio (Rg)", "gust_amp_ratio"),
         ("Gust Onset Peak Error (m)", "transient_peak"),
         ("Gust Settling Time Ts (s)", "settling_time"),
@@ -253,7 +253,7 @@ def plot_page1_trajectory_tracking(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid
 
     # (b) 3D Position Error vs Time
     ax2 = fig.add_subplot(2, 2, 2)
-    ax2.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (90~120s)")
+    ax2.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (45~75s)")
     if df_eso is not None:
         ax2.plot(df_eso["time_sec"], df_eso["err_pos_norm"], color="#2ca02c", label="NMPC+ESO Error", linewidth=2.0)
     if df_nmpc is not None:
@@ -268,7 +268,7 @@ def plot_page1_trajectory_tracking(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid
 
     # (c) Axis-Wise Tracking Error (X and Y Axis)
     ax3 = fig.add_subplot(2, 2, 3)
-    ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust")
+    ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (45~75s)")
     if df_eso is not None:
         ax3.plot(df_eso["time_sec"], df_eso["err_x"], color="#2ca02c", label="NMPC+ESO Err X", linewidth=1.8)
         ax3.plot(df_eso["time_sec"], df_eso["err_y"], color="#1b9e77", linestyle="--", label="NMPC+ESO Err Y", linewidth=1.5)
@@ -321,7 +321,7 @@ def plot_page2_attitude_dynamics(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, 
 
     # (a) Roll Angle Tracking
     ax1 = fig.add_subplot(2, 2, 1)
-    ax1.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window")
+    ax1.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (45~75s)")
     if df_eso is not None and "roll_deg" in df_eso.columns:
         ax1.plot(df_eso["time_sec"], df_eso["roll_deg"], color="#2ca02c", label="NMPC+ESO Roll (°)", linewidth=1.8)
     if df_nmpc is not None and "roll_deg" in df_nmpc.columns:
@@ -338,7 +338,7 @@ def plot_page2_attitude_dynamics(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, 
 
     # (b) Pitch Angle Tracking (Crucial for +X Wind Rejection)
     ax2 = fig.add_subplot(2, 2, 2)
-    ax2.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (3.0 m/s +X)")
+    ax2.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (45~75s, 3.0 m/s +X)")
     if df_eso is not None and "pitch_deg" in df_eso.columns:
         ax2.plot(df_eso["time_sec"], df_eso["pitch_deg"], color="#2ca02c", label="NMPC+ESO Pitch (°)", linewidth=2.0)
     if df_nmpc is not None and "pitch_deg" in df_nmpc.columns:
@@ -355,13 +355,13 @@ def plot_page2_attitude_dynamics(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, 
     ax3 = fig.add_subplot(2, 2, 3)
     ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust")
     if df_eso is not None and m_eso is not None:
-        t_eso = df_eso[df_eso["time_sec"] >= 15.0]
+        t_eso = df_eso[df_eso["time_sec"] >= 10.0]
         ax3.plot(t_eso["time_sec"], m_eso["body_rate_norm"], color="#2ca02c", label="NMPC+ESO Angular Rate", linewidth=1.6)
     if df_nmpc is not None and m_nmpc is not None:
-        t_nmpc = df_nmpc[df_nmpc["time_sec"] >= 15.0]
+        t_nmpc = df_nmpc[df_nmpc["time_sec"] >= 10.0]
         ax3.plot(t_nmpc["time_sec"], m_nmpc["body_rate_norm"], color="#1f77b4", linestyle="-.", label="NMPC Pure Angular Rate", linewidth=1.4)
     if df_pid is not None and m_pid is not None:
-        t_pid = df_pid[df_pid["time_sec"] >= 15.0]
+        t_pid = df_pid[df_pid["time_sec"] >= 10.0]
         ax3.plot(t_pid["time_sec"], m_pid["body_rate_norm"], color="#d62728", linestyle=":", label="PID Angular Rate", linewidth=1.2, alpha=0.7)
     ax3.set_xlabel("Time (s)")
     ax3.set_ylabel("Body Angular Rate Norm (rad/s)")
@@ -408,7 +408,7 @@ def plot_page3_eso_disturbance_rejection(df_eso, df_nmpc, df_pid, m_eso, m_nmpc,
 
     # (a) Online Disturbance Estimation by ESO
     ax1 = fig.add_subplot(2, 2, 1)
-    ax1.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="True Wind Gust Window (3.0 m/s +X)")
+    ax1.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="True Wind Gust Window (45~75s, 3.0 m/s +X)")
     if df_eso is not None and "eso_dx" in df_eso.columns and (df_eso["eso_dx"]**2 + df_eso["eso_dy"]**2).sum() > 1e-4:
         ax1.plot(df_eso["time_sec"], df_eso["eso_dx"], color="#d95f02", label=r"$\hat{d}_x$ (Wind Axis Estimation)", linewidth=2.0)
         ax1.plot(df_eso["time_sec"], df_eso["eso_dy"], color="#7570b3", linestyle="--", label=r"$\hat{d}_y$ (Lateral Axis)", linewidth=1.5)
@@ -424,13 +424,13 @@ def plot_page3_eso_disturbance_rejection(df_eso, df_nmpc, df_pid, m_eso, m_nmpc,
 
     # (b) Steady-State Error Suppression along Wind Axis
     ax2 = fig.add_subplot(2, 2, 2)
-    ax2.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window")
+    ax2.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (45~75s)")
     if df_eso is not None:
         ax2.plot(df_eso["time_sec"], df_eso["err_x"], color="#2ca02c", label="NMPC+ESO (Bias ≈ 0cm)", linewidth=2.0)
     if df_nmpc is not None:
-        ax2.plot(df_nmpc["time_sec"], df_nmpc["err_x"], color="#1f77b4", linestyle="-.", label="NMPC Pure (Steady Bias ≈ 21cm)", linewidth=1.6)
+        ax2.plot(df_nmpc["time_sec"], df_nmpc["err_x"], color="#1f77b4", linestyle="-.", label="NMPC Pure (Steady Bias)", linewidth=1.6)
     if df_pid is not None:
-        ax2.plot(df_pid["time_sec"], df_pid["err_x"], color="#d62728", linestyle=":", label="PID Baseline (Steady Bias ≈ 24cm)", linewidth=1.4, alpha=0.8)
+        ax2.plot(df_pid["time_sec"], df_pid["err_x"], color="#d62728", linestyle=":", label="PID Baseline (Steady Bias)", linewidth=1.4, alpha=0.8)
     ax2.set_xlabel("Time (s)")
     ax2.set_ylabel("Wind Axis Tracking Error ex (m)")
     ax2.set_title("(b) Steady-State Error Suppression along Wind Axis (+X)")
@@ -439,7 +439,7 @@ def plot_page3_eso_disturbance_rejection(df_eso, df_nmpc, df_pid, m_eso, m_nmpc,
 
     # (c) Time-Weighted Cumulative Tracking Error (ITAE)
     ax3 = fig.add_subplot(2, 2, 3)
-    ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window")
+    ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (45~75s)")
     for df_curr, col, name in [(df_eso, "#2ca02c", "NMPC+ESO"), (df_nmpc, "#1f77b4", "NMPC Pure"), (df_pid, "#d62728", "PID Baseline")]:
         if df_curr is not None:
             g = df_curr[(df_curr["time_sec"] >= GUST_START) & (df_curr["time_sec"] <= GUST_END)].copy()
@@ -522,8 +522,8 @@ def main():
     max_times = [df["time_sec"].max() for df in [df_eso, df_nmpc, df_pid] if df is not None]
     if max_times:
         t_max_common = min(max_times)
-        if t_max_common >= 20.0:
-            print(f"[Time Sync] Synchronizing comparison to common overlapping window: 15.0s ~ {t_max_common:.1f}s")
+        if t_max_common >= 15.0:
+            print(f"[Time Sync] Synchronizing comparison to common overlapping window: 10.0s ~ {t_max_common:.1f}s")
             if df_eso is not None:
                 df_eso = df_eso[df_eso["time_sec"] <= t_max_common].copy()
             if df_nmpc is not None:

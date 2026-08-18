@@ -18,15 +18,15 @@ graph LR
 
 ## 🌪️ 一、 VM Ubuntu 20.04 Gazebo SITL 仿真完整操作指南
 
-仿真世界基于 `windy.world`（**Gazebo 仿真时间 90s~120s 施加 +X 方向 3.0 m/s 阶跃突发阵风**），采用**控制器起飞悬停与轨迹触发解耦**的标准流程。
+仿真世界基于 `windy.world`（**Gazebo 仿真时间 45s~75s 施加 +X 方向 3.0 m/s 阶跃突发阵风**），采用**控制器起飞悬停与轨迹触发解耦**的标准流程。
 
 ```mermaid
 graph LR
     T1["终端 1: Gazebo SITL"] --> T2["终端 2: roscore"]
     T2 --> T3["终端 3: MAVROS"]
     T3 --> T4["终端 4: 启动控制器 (自动起飞并悬停)"]
-    T4 --> T5["终端 5: 启动圆轨迹跟踪"]
-    T5 --> T6["终端 6: 性能评估与绘图"]
+    T4 --> T5["终端 5: 启动圆轨迹跟踪 (悬停点为圆心 -> 切入圆周)"]
+    T5 --> T6["终端 6: 3页专题学术评测与对比图"]
 ```
 
 ### 步骤 1：终端 1 启动 PX4 SITL 与 Gazebo 风场环境
@@ -69,19 +69,20 @@ source ~/Desktop/catkin_ws/devel/setup.bash
 roslaunch uav_mpc simulation_pid_baseline.launch
 ```
 
-### 步骤 5：终端 5 发布圆轨迹（按需启动走圆）
+### 步骤 5：终端 5 发布圆轨迹（以悬停点为圆心，平滑飞往圆周并绕圆）
 确认无人机在 1.5m 高度悬停平稳后，在终端 5 执行：
 ```bash
 source ~/Desktop/catkin_ws/devel/setup.bash
-roslaunch uav_mpc publish_circle_traj.launch height:=1.5 radius:=1.5 linear_vel:=0.8 cycles:=15
+roslaunch uav_mpc publish_circle_traj.launch height:=1.5 radius:=1.5 linear_vel:=0.8 cycles:=10
 ```
+> 轨迹发生器将自动把当前悬停点设为**圆心 $(x_c, y_c)$**，在前 3 秒以五次多项式平滑飞向固定圆周起点 $(x_c + R, y_c)$，随后无冲击切入圆周巡航。
 
-### 步骤 6：终端 6 运行多维度定量评估与对比绘图
+### 步骤 6：终端 6 运行 3 大独立学术专题评估与绘图
 ```bash
 cd ~/Desktop/catkin_ws/src/quadrotor_mpc
 python3 scripts/evaluate_nmpc_vs_pid.py
 ```
-> 自动加载 `data/` 目录下的实验数据，生成 **NMPC+ESO vs 纯NMPC vs PID** 的三方综合评测表格与高清对比图 `simulation_evaluation_report.png`。
+> 自动加载最新实验数据，生成 45s~75s 阵风工况下的学术评测表格与 3 大独立专题高清对比图（`eval_page1_*.png`, `eval_page2_*.png`, `eval_page3_*.png`）。
 
 ---
 
