@@ -36,6 +36,8 @@ private:
     ros::Publisher pub_vel_error_;
     ros::Publisher pub_pos_error_norm_;
     ros::Publisher pub_vel_error_norm_;
+    ros::Publisher pub_rate_error_;
+    ros::Publisher pub_rate_error_norm_;
 
     // State Variables
     nav_msgs::Odometry current_odom_;
@@ -136,6 +138,8 @@ public:
         pub_vel_error_ = nh_.advertise<geometry_msgs::Vector3Stamped>("/mpc_debug/vel_error_3d", 1);
         pub_pos_error_norm_ = nh_.advertise<std_msgs::Float64>("/mpc_debug/pos_error_norm", 1);
         pub_vel_error_norm_ = nh_.advertise<std_msgs::Float64>("/mpc_debug/vel_error_norm", 1);
+        pub_rate_error_ = nh_.advertise<geometry_msgs::Vector3Stamped>("/mpc_debug/rate_error_3d", 1);
+        pub_rate_error_norm_ = nh_.advertise<std_msgs::Float64>("/mpc_debug/rate_error_norm", 1);
     }
 
     ~DataLogger()
@@ -241,6 +245,24 @@ public:
                 std_msgs::Float64 norm_msg;
                 norm_msg.data = pos_err_norm;
                 pub_pos_error_norm_.publish(norm_msg);
+
+                // Publish real-time angular rate errors
+                double e_wx = raw_control_[1] - imu_wx_;
+                double e_wy = raw_control_[2] - imu_wy_;
+                double e_wz = raw_control_[3] - imu_wz_;
+                double rate_err_norm = std::sqrt(e_wx * e_wx + e_wy * e_wy + e_wz * e_wz);
+
+                geometry_msgs::Vector3Stamped rate_err_msg;
+                rate_err_msg.header.stamp = now;
+                rate_err_msg.header.frame_id = "base_link";
+                rate_err_msg.vector.x = e_wx;
+                rate_err_msg.vector.y = e_wy;
+                rate_err_msg.vector.z = e_wz;
+                pub_rate_error_.publish(rate_err_msg);
+
+                std_msgs::Float64 rate_norm_msg;
+                rate_norm_msg.data = rate_err_norm;
+                pub_rate_error_norm_.publish(rate_norm_msg);
 
                 // Write to CSV file
                 if (csv_file_.is_open())
