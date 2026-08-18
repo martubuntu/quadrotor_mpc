@@ -8,6 +8,7 @@
 #include <ros/ros.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/PointStamped.h>
+#include <geometry_msgs/Vector3Stamped.h>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <std_msgs/Bool.h>
@@ -48,12 +49,20 @@ class MPCWrapper
     acado_timer t;
 
     void updateState(nav_msgs::Odometry& msg);
+    void updateOnlineData();
     void publishDebugData();
 
     ros::Publisher pub_pred_path;
     ros::Publisher pub_ref_path;
     ros::Publisher pub_pred_u;
     ros::Publisher pub_x0;
+
+    // ESO disturbance feedforward interface
+    ros::Subscriber eso_sub;
+    Eigen::Vector3d disturbance_;
+    ros::Time disturbance_stamp_;
+    bool disturbance_received_;
+    void esoCallback(const geometry_msgs::Vector3Stamped::ConstPtr& msg);
 
   public:
     MPCWrapper(ros::NodeHandle &nh);

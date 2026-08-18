@@ -33,6 +33,15 @@ MPCWrapper::MPCWrapper(ros::NodeHandle &nh):nh(nh)
   pub_ref_path = nh.advertise<nav_msgs::Path>("/mpc_debug/acado_ref_path", 1);
   pub_pred_u = nh.advertise<std_msgs::Float32MultiArray>("/mpc_debug/acado_pred_u", 1);
   pub_x0 = nh.advertise<std_msgs::Float32MultiArray>("/mpc_debug/acado_x0", 1);
+
+  disturbance_.setZero();
+  disturbance_received_ = false;
+
+  eso_sub = nh.subscribe<geometry_msgs::Vector3Stamped>(
+      "/eso/disturbance",
+      10,
+      &MPCWrapper::esoCallback,
+      this);
 }
 
 MPCWrapper::~MPCWrapper()
@@ -160,11 +169,53 @@ void MPCWrapper::gerReference(const Eigen::MatrixXd& ref)
   }  
 }
 
+void MPCWrapper::esoCallback(const geometry_msgs::Vector3Stamped::ConstPtr& msg)
+{
+    disturbance_[0] = msg->vector.x;
+    disturbance_[1] = msg->vector.y;
+    disturbance_[2] = msg->vector.z;
+
+    disturbance_stamp_ = ros::Time::now();
+    disturbance_received_ = true;
+}
+
+void MPCWrapper::updateOnlineData()
+{
+    Eigen::Vector3d d = Eigen::Vector3d::Zero();
+
+    if(disturbance_received_)
+    {
+        double age = (ros::Time::now() - disturbance_stamp_).toSec();
+        if(age >= 0.0 && age < 0.2)
+        {
+            d = disturbance_;
+        }
+    }
+
+    for(int i = 0; i <= N; ++i)
+    {
+        for(int j = 0; j < NOD; ++j)
+        {
+            acadoVariables.od[i * NOD + j] = 0.0;
+        }
+
+        acadoVariables.od[i * NOD + 0] = d.x();
+        acadoVariables.od[i * NOD + 1] = d.y();
+        acadoVariables.od[i * NOD + 2] = d.z();
+    }
+}
+
 bool MPCWrapper::getSolution(nav_msgs::Odometry& msg, Eigen::Vector4f& control)
 {
   acado_tic( &t );
   
-  /* The Real-time Intreration. */
+  // 1. Update State
+  updateState(msg);
+
+  // 2. Inject ESO Disturbance into Online Data
+  updateOnlineData();
+
+  /* The Real-time Iteration. */
   status = acado_feedbackStep( );
 
   if ( status )
@@ -174,9 +225,6 @@ bool MPCWrapper::getSolution(nav_msgs::Odometry& msg, Eigen::Vector4f& control)
 
   publishDebugData();
 
-	// acado_printDifferentialVariables();
-	// acado_printControlVariables();
-
   /* Return Control Input Value */
   real_t *U = acado_getVariablesU();
   control[0] = U[0];
@@ -184,24 +232,10 @@ bool MPCWrapper::getSolution(nav_msgs::Odometry& msg, Eigen::Vector4f& control)
   control[2] = U[2];
   control[3] = U[3];
 
-  /* Update the State */
-  updateState(msg);
-
-  /* Optional: shift the initialization (look at acado_common.h). */
-  // acado_shiftStates(2, 0, 0); 
-  // acado_shiftControls( 0 );
-
   /* Prepare for the next step. */
   acado_preparationStep();
 
-  /* Read the elapsed time. */
-  real_t te = acado_toc( &t );
-
-  /* Eye-candy. */
-  if( !VERBOSE )
-	   printf("\n\n Average time of one real-time iteration:   %f milliseconds\n\n", 1e3 * te );
-  
-  return true;
+  return 1;
 }
 
 void MPCWrapper::publishDebugData()

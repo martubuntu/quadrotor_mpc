@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Multi-Dimensional Performance Evaluation: NMPC vs PID Baseline
+Multi-Dimensional Performance Evaluation: NMPC + ESO vs NMPC vs PID Baseline
 Simulation under Wind Gust Disturbance (90s ~ 120s, 3.0 m/s +X)
 
 Usage:
-    python3 evaluate_nmpc_vs_pid.py [nmpc_log.csv] [pid_log.csv]
-If arguments are omitted, it automatically picks the latest NMPC and PID logs in data/.
+    python3 evaluate_nmpc_vs_pid.py [nmpc_eso_log.csv] [nmpc_log.csv] [pid_log.csv]
+If arguments are omitted, it automatically picks the latest logs from data/.
 """
 
 import sys
@@ -25,9 +25,9 @@ def find_latest_log(data_dir, prefix):
     if not files:
         if prefix == "NMPC":
             all_files = glob.glob(os.path.join(data_dir, "flight_log_*.csv"))
-            non_pid = [f for f in all_files if "PID" not in f]
-            if non_pid:
-                return max(non_pid, key=os.path.getctime)
+            non_special = [f for f in all_files if "PID" not in f and "ESO" not in f]
+            if non_special:
+                return max(non_special, key=os.path.getctime)
         return None
     return max(files, key=os.path.getctime)
 
@@ -57,13 +57,11 @@ def calculate_metrics(df, label=""):
     transient_peak = float(np.max(transient["err_pos_norm"])) if not transient.empty else max_err
 
     # 3. Control Smoothness (Body Rates)
-    # Prefer measured IMU angular velocity; fallback to ctrl_wx/wy/wz or velocity gradient
     if "imu_wx" in df_track.columns and (df_track["imu_wx"]**2 + df_track["imu_wy"]**2).sum() > 1e-3:
         body_rate_norm = np.sqrt(df_track["imu_wx"]**2 + df_track["imu_wy"]**2 + df_track["imu_wz"]**2)
     elif "ctrl_wx" in df_track.columns and (df_track["ctrl_wx"]**2 + df_track["ctrl_wy"]**2 + df_track["ctrl_wz"]**2).sum() > 1e-3:
         body_rate_norm = np.sqrt(df_track["ctrl_wx"]**2 + df_track["ctrl_wy"]**2 + df_track["ctrl_wz"]**2)
     else:
-        # Approximate body angular rate from velocity lateral acceleration (rad/s)
         vx = df_track["vel_x"].values
         vy = df_track["vel_y"].values
         dt_approx = np.median(np.diff(df_track["time_sec"])) if len(df_track) > 1 else 0.05
@@ -76,13 +74,12 @@ def calculate_metrics(df, label=""):
     # 4. Throttle Series & Variance
     thrust_series = df_track["cmd_thrust"].copy().astype(float)
     if thrust_series.sum() < 1e-3 and "imu_acc_z" in df_track.columns:
-        # Reconstruct throttle for PID from IMU specific force
         hover_ratio = 9.8066 / 0.58
         thrust_series = np.clip(df_track["imu_acc_z"] / hover_ratio, 0.15, 0.95)
     
     thrust_var = float(np.var(thrust_series))
 
-    # 5. Energy Metrics (Power proxy integral: T^1.5 dt, control effort: (T^2 + 0.05 * w^2) dt)
+    # 5. Energy Metrics
     dt = float(np.median(np.diff(df_track["time_sec"]))) if len(df_track) > 1 else 0.05
     energy_power_proxy = float(np.sum(thrust_series**1.5) * dt)
     energy_effort = float(np.sum(thrust_series**2 + 0.05 * (body_rate_norm**2)) * dt)
@@ -107,13 +104,15 @@ def calculate_metrics(df, label=""):
         "body_rate_norm": body_rate_norm
     }
 
-def print_comparison_table(m_nmpc, m_pid):
-    print("\n" + "="*80)
+def print_comparison_table(m_eso, m_nmpc, m_pid):
+    print("\n" + "="*95)
     print("      QUADROTOR TRAJECTORY TRACKING MULTI-DIMENSIONAL EVALUATION REPORT")
     print("      Wind Gust: 90s - 120s (+X 3.0 m/s) | Circle Radius: 1.5m, Vel: 0.8m/s")
-    print("="*80)
-    print(f"{'Performance Metric':<35} | {'NMPC':<12} | {'PID Baseline':<12} | {'Improvement':<12}")
-    print("-"*80)
+    print("="*95)
+
+    headers = f"{'Performance Metric':<32} | {'NMPC + ESO':<12} | {'NMPC (Pure)':<12} | {'PID Baseline':<12} | {'ESO vs PID':<10}"
+    print(headers)
+    print("-"*95)
 
     comparisons = [
         ("3D Position RMSE (m)", "rmse_3d", True),
@@ -133,28 +132,41 @@ def print_comparison_table(m_nmpc, m_pid):
     ]
 
     for title, key, lower_is_better in comparisons:
-        v_nmpc = m_nmpc[key]
+        v_eso = m_eso[key] if m_eso else None
+        v_nmpc = m_nmpc[key] if m_nmpc else None
         v_pid = m_pid[key] if m_pid else None
-        if v_pid is not None:
-            if v_pid != 0:
-                pct = (v_pid - v_nmpc) / v_pid * 100.0 if lower_is_better else (v_nmpc - v_pid) / v_pid * 100.0
-                pct_str = f"{pct:+.1f}%" if abs(pct) > 0.01 else "0.0%"
-            else:
-                pct_str = "0.0%"
-            print(f"{title:<35} | {v_nmpc:<12.4f} | {v_pid:<12.4f} | {pct_str:<12}")
-        else:
-            print(f"{title:<35} | {v_nmpc:<12.4f} | {'N/A':<12} | {'N/A':<12}")
-    print("="*80 + "\n")
 
-def plot_comparison(df_nmpc, df_pid, m_nmpc, m_pid, save_path):
+        str_eso = f"{v_eso:<12.4f}" if v_eso is not None else f"{'N/A':<12}"
+        str_nmpc = f"{v_nmpc:<12.4f}" if v_nmpc is not None else f"{'N/A':<12}"
+        str_pid = f"{v_pid:<12.4f}" if v_pid is not None else f"{'N/A':<12}"
+
+        # Calculate improvement of primary vs PID
+        v_main = v_eso if v_eso is not None else v_nmpc
+        if v_main is not None and v_pid is not None and v_pid != 0:
+            pct = (v_pid - v_main) / v_pid * 100.0 if lower_is_better else (v_main - v_pid) / v_pid * 100.0
+            str_imp = f"{pct:+.1f}%" if abs(pct) > 0.01 else "0.0%"
+        else:
+            str_imp = "N/A"
+
+        print(f"{title:<32} | {str_eso} | {str_nmpc} | {str_pid} | {str_imp:<10}")
+    print("="*95 + "\n")
+
+def plot_comparison(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
     fig = plt.figure(figsize=(18, 12))
 
     # 1. XY Flight Trajectory Comparison
     ax1 = fig.add_subplot(2, 2, 1)
-    ax1.plot(df_nmpc["ref_x"], df_nmpc["ref_y"], "k--", label="Reference Circle", linewidth=1.5)
-    ax1.plot(df_nmpc["pos_x"], df_nmpc["pos_y"], "b-", label=f"NMPC (RMSE={m_nmpc['rmse_3d']:.3f}m)", linewidth=1.8)
-    if df_pid is not None:
-        ax1.plot(df_pid["pos_x"], df_pid["pos_y"], "r-.", label=f"PID Baseline (RMSE={m_pid['rmse_3d']:.3f}m)", linewidth=1.5, alpha=0.8)
+    ref_df = df_eso if df_eso is not None else df_nmpc
+    if ref_df is not None:
+        ax1.plot(ref_df["ref_x"], ref_df["ref_y"], "k--", label="Reference Circle", linewidth=1.5)
+    
+    if df_eso is not None and m_eso is not None:
+        ax1.plot(df_eso["pos_x"], df_eso["pos_y"], "g-", label=f"NMPC+ESO (RMSE={m_eso['rmse_3d']:.3f}m)", linewidth=2.0)
+    if df_nmpc is not None and m_nmpc is not None:
+        ax1.plot(df_nmpc["pos_x"], df_nmpc["pos_y"], "b-.", label=f"NMPC Pure (RMSE={m_nmpc['rmse_3d']:.3f}m)", linewidth=1.8)
+    if df_pid is not None and m_pid is not None:
+        ax1.plot(df_pid["pos_x"], df_pid["pos_y"], "r:", label=f"PID Baseline (RMSE={m_pid['rmse_3d']:.3f}m)", linewidth=1.5, alpha=0.8)
+    
     ax1.set_xlabel("X Position (m)")
     ax1.set_ylabel("Y Position (m)")
     ax1.set_title("XY Flight Trajectory Comparison")
@@ -165,23 +177,32 @@ def plot_comparison(df_nmpc, df_pid, m_nmpc, m_pid, save_path):
     # 2. Tracking Error vs Time with Shaded Wind Gust Window
     ax2 = fig.add_subplot(2, 2, 2)
     ax2.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (3.0 m/s +X)")
-    ax2.plot(df_nmpc["time_sec"], df_nmpc["err_pos_norm"], "b-", label="NMPC 3D Error", linewidth=1.8)
+    if df_eso is not None:
+        ax2.plot(df_eso["time_sec"], df_eso["err_pos_norm"], "g-", label="NMPC+ESO Error", linewidth=2.0)
+    if df_nmpc is not None:
+        ax2.plot(df_nmpc["time_sec"], df_nmpc["err_pos_norm"], "b-.", label="NMPC Pure Error", linewidth=1.6)
     if df_pid is not None:
-        ax2.plot(df_pid["time_sec"], df_pid["err_pos_norm"], "r-.", label="PID Baseline 3D Error", linewidth=1.5, alpha=0.8)
+        ax2.plot(df_pid["time_sec"], df_pid["err_pos_norm"], "r:", label="PID Baseline Error", linewidth=1.4, alpha=0.8)
+    
     ax2.set_xlabel("Time (s)")
     ax2.set_ylabel("3D Position Error (m)")
     ax2.set_title("Position Tracking Error vs Time (With Wind Gust 90~120s)")
     ax2.grid(True, linestyle="--", alpha=0.6)
     ax2.legend(loc="upper right")
 
-    # 3. Control Throttle & Dynamic Response
+    # 3. Throttle Response
     ax3 = fig.add_subplot(2, 2, 3)
     ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust")
-    nmpc_track = df_nmpc[df_nmpc["time_sec"] >= 15.0]
-    ax3.plot(nmpc_track["time_sec"], m_nmpc["thrust_series"], "b-", label="NMPC Thrust", linewidth=1.5)
-    if df_pid is not None:
-        pid_track = df_pid[df_pid["time_sec"] >= 15.0]
-        ax3.plot(pid_track["time_sec"], m_pid["thrust_series"], "r--", label="PID Equivalent Thrust", linewidth=1.5, alpha=0.7)
+    if df_eso is not None and m_eso is not None:
+        t_eso = df_eso[df_eso["time_sec"] >= 15.0]
+        ax3.plot(t_eso["time_sec"], m_eso["thrust_series"], "g-", label="NMPC+ESO Thrust", linewidth=1.8)
+    if df_nmpc is not None and m_nmpc is not None:
+        t_nmpc = df_nmpc[df_nmpc["time_sec"] >= 15.0]
+        ax3.plot(t_nmpc["time_sec"], m_nmpc["thrust_series"], "b-.", label="NMPC Pure Thrust", linewidth=1.5)
+    if df_pid is not None and m_pid is not None:
+        t_pid = df_pid[df_pid["time_sec"] >= 15.0]
+        ax3.plot(t_pid["time_sec"], m_pid["thrust_series"], "r:", label="PID Equivalent Thrust", linewidth=1.3, alpha=0.7)
+    
     ax3.set_xlabel("Time (s)")
     ax3.set_ylabel("Thrust (Normalized 0~1)")
     ax3.set_title("Throttle Response under Wind Disturbance")
@@ -190,31 +211,31 @@ def plot_comparison(df_nmpc, df_pid, m_nmpc, m_pid, save_path):
 
     # 4. Multi-Dimensional Performance Bar Chart
     ax4 = fig.add_subplot(2, 2, 4)
-    if df_pid is not None:
-        categories = ["3D RMSE (m)", "Gust RMSE (m)", "Peak Err (m)", "Rate RMS (rad/s)"]
-        nmpc_vals = [m_nmpc["rmse_3d"], m_nmpc["rmse_gust"], m_nmpc["transient_peak"], m_nmpc["rate_rms"]]
-        pid_vals = [m_pid["rmse_3d"], m_pid["rmse_gust"], m_pid["transient_peak"], m_pid["rate_rms"]]
+    categories = ["3D RMSE (m)", "Gust RMSE (m)", "Peak Err (m)", "Rate RMS (rad/s)"]
+    x = np.arange(len(categories))
+    width = 0.25
 
-        x = np.arange(len(categories))
-        width = 0.35
-        rects1 = ax4.bar(x - width/2, nmpc_vals, width, label="NMPC", color="royalblue")
-        rects2 = ax4.bar(x + width/2, pid_vals, width, label="PID Baseline", color="salmon")
+    offset = -width if df_eso is not None and df_nmpc is not None and df_pid is not None else -width/2
+    if df_eso is not None and m_eso is not None:
+        vals = [m_eso["rmse_3d"], m_eso["rmse_gust"], m_eso["transient_peak"], m_eso["rate_rms"]]
+        ax4.bar(x + offset, vals, width, label="NMPC+ESO", color="mediumseagreen")
+        offset += width
 
-        ax4.set_ylabel("Metric Value")
-        ax4.set_title("Key Performance Comparison Across Dimensions")
-        ax4.set_xticks(x)
-        ax4.set_xticklabels(categories)
-        ax4.legend()
-        ax4.grid(True, axis="y", linestyle="--", alpha=0.6)
+    if df_nmpc is not None and m_nmpc is not None:
+        vals = [m_nmpc["rmse_3d"], m_nmpc["rmse_gust"], m_nmpc["transient_peak"], m_nmpc["rate_rms"]]
+        ax4.bar(x + offset, vals, width, label="NMPC Pure", color="royalblue")
+        offset += width
 
-        for rect in rects1 + rects2:
-            h = rect.get_height()
-            ax4.annotate(f'{h:.3f}',
-                         xy=(rect.get_x() + rect.get_width() / 2, h),
-                         xytext=(0, 3), textcoords="offset points",
-                         ha='center', va='bottom', fontsize=9)
-    else:
-        ax4.text(0.5, 0.5, "PID log not provided for comparative bar chart", ha="center", va="center")
+    if df_pid is not None and m_pid is not None:
+        vals = [m_pid["rmse_3d"], m_pid["rmse_gust"], m_pid["transient_peak"], m_pid["rate_rms"]]
+        ax4.bar(x + offset, vals, width, label="PID Baseline", color="salmon")
+
+    ax4.set_ylabel("Metric Value")
+    ax4.set_title("Multi-Dimensional Performance Comparison")
+    ax4.set_xticks(x)
+    ax4.set_xticklabels(categories)
+    ax4.legend()
+    ax4.grid(True, axis="y", linestyle="--", alpha=0.6)
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300)
@@ -225,37 +246,42 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(script_dir, "..", "data")
 
-    nmpc_file = None
-    pid_file = None
+    eso_file = find_latest_log(data_dir, "NMPC_ESO")
+    nmpc_file = find_latest_log(data_dir, "NMPC")
+    pid_file = find_latest_log(data_dir, "PID")
 
-    if len(sys.argv) >= 3:
-        nmpc_file = sys.argv[1]
-        pid_file = sys.argv[2]
-    elif len(sys.argv) == 2:
-        nmpc_file = sys.argv[1]
-    else:
-        nmpc_file = find_latest_log(data_dir, "NMPC")
-        pid_file = find_latest_log(data_dir, "PID")
+    if len(sys.argv) >= 4:
+        eso_file, nmpc_file, pid_file = sys.argv[1], sys.argv[2], sys.argv[3]
+    elif len(sys.argv) == 3:
+        nmpc_file, pid_file = sys.argv[1], sys.argv[2]
 
-    if nmpc_file is None:
-        print(f"[Error] No NMPC flight log found in {data_dir}")
-        sys.exit(1)
+    df_eso, m_eso = None, None
+    df_nmpc, m_nmpc = None, None
+    df_pid, m_pid = None, None
 
-    print(f"Loading NMPC Log: {nmpc_file}")
-    df_nmpc = pd.read_csv(nmpc_file)
-    m_nmpc = calculate_metrics(df_nmpc, "NMPC")
+    if eso_file and os.path.exists(eso_file):
+        print(f"Loading NMPC+ESO Log: {eso_file}")
+        df_eso = pd.read_csv(eso_file)
+        m_eso = calculate_metrics(df_eso, "NMPC_ESO")
 
-    df_pid = None
-    m_pid = None
+    if nmpc_file and os.path.exists(nmpc_file):
+        print(f"Loading NMPC Pure Log: {nmpc_file}")
+        df_nmpc = pd.read_csv(nmpc_file)
+        m_nmpc = calculate_metrics(df_nmpc, "NMPC")
+
     if pid_file and os.path.exists(pid_file):
-        print(f"Loading PID Log : {pid_file}")
+        print(f"Loading PID Log      : {pid_file}")
         df_pid = pd.read_csv(pid_file)
         m_pid = calculate_metrics(df_pid, "PID")
 
-    print_comparison_table(m_nmpc, m_pid)
+    if m_eso is None and m_nmpc is None:
+        print(f"[Error] No NMPC or NMPC_ESO flight logs found in {data_dir}")
+        sys.exit(1)
+
+    print_comparison_table(m_eso, m_nmpc, m_pid)
 
     save_plot_path = os.path.join(data_dir, "simulation_evaluation_report.png")
-    plot_comparison(df_nmpc, df_pid, m_nmpc, m_pid, save_plot_path)
+    plot_comparison(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_plot_path)
 
 if __name__ == "__main__":
     main()

@@ -73,6 +73,13 @@ target_link_libraries(mpc_node
   ${catkin_LIBRARIES})
 add_dependencies(mpc_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
+add_executable(eso_observer_node
+  src/eso_observer_node.cpp)
+
+target_link_libraries(eso_observer_node
+  ${catkin_LIBRARIES})
+add_dependencies(eso_observer_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
 add_executable(circle_traj_node
   src/circle_traj_node.cpp)
 

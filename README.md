@@ -1,6 +1,8 @@
 # UAV Non-linear MPC (ACADO) 轨迹跟踪控制与性能评估系统
 
-本项目是基于 **ACADO Toolkit (qpOASES)** 的四旋翼无人机非线性模型预测控制（NMPC）系统，支持 **Gazebo SITL 仿真（含突发阵风扰动）** 与 **实机自主飞行**，具备动态推力自适应估计、闭环圆轨迹跟踪、PX4 原生级联 PID 对照组以及多维度性能量化评估体系。
+本项目是基于 **ACADO Toolkit (qpOASES)** 的四旋翼无人机非线性模型预测控制（NMPC）系统，支持 **Gazebo SITL 仿真（含突发阵风扰动）** 与 **实机自主飞行**，具备 ESO 扩展状态风扰观测器、动态推力自适应估计、闭环圆轨迹跟踪、PX4 原生级联 PID 对照组以及多维度性能量化评估体系。
+
+当前开发分支：**`NMPC_trajok_simulation`**
 
 ---
 
@@ -8,8 +10,8 @@
 
 ```mermaid
 graph LR
-    Stage1["【当前】阶段 1: NMPC 闭环仿真与 PID 多维度对比"] --> Stage2["阶段 2: ESO 扩展状态观测器风扰估计与前馈补偿"]
-    Stage2 --> Stage3["阶段 3: 偏心载荷与风扰下跟踪-能耗协同优化 NMPC"]
+    Stage1["【已完成】阶段 1: NMPC 闭环基线仿真 (RMSE: 0.118m, 相比PID提升 +65.9%)"] --> Stage2["【当前推进】阶段 2: NMPC + ESO 扩展状态观测器风扰估计与前馈补偿"]
+    Stage2 --> Stage3["【规划中】阶段 3: 偏心载荷与风扰下跟踪-能耗协同优化 NMPC"]
 ```
 
 ---
@@ -48,79 +50,49 @@ roslaunch mavros px4.launch fcu_url:="udp://:14540@127.0.0.1:14557"
 
 ### 步骤 4：终端 4 启动控制器（起飞至 1.5m 稳定悬停）
 
-#### 实验组 A（NMPC 控制器）：
+#### 选项 A（【推荐】阶段二 NMPC + ESO 扩展状态观测器实验组）：
+```bash
+source ~/Desktop/catkin_ws/devel/setup.bash
+roslaunch uav_mpc simulation_mpc_eso.launch
+```
+> ESO 节点将在线估计受到的外部风阻加速度 $\hat{\mathbf{d}}$，并实时注入 ACADO 预测模型进行前馈抗扰补偿。
+
+#### 选项 B（阶段一 纯 NMPC 实验组）：
 ```bash
 source ~/Desktop/catkin_ws/devel/setup.bash
 roslaunch uav_mpc simulation_mpc.launch
 ```
-> 控制器自动解锁起飞至 1.5m，随后在 `(0, 0, 1.5)` 稳定悬停等待轨迹指令。
 
-#### 对照组 B（PID 基准控制器）：
+#### 选项 C（PX4 原生级联 PID 基准对照组）：
 ```bash
 source ~/Desktop/catkin_ws/devel/setup.bash
 roslaunch uav_mpc simulation_pid_baseline.launch
 ```
-> 基准控制器自动解锁起飞至 1.5m 稳定悬停。
 
 ### 步骤 5：终端 5 发布圆轨迹（按需启动走圆）
 确认无人机在 1.5m 高度悬停平稳后，在终端 5 执行：
 ```bash
 source ~/Desktop/catkin_ws/devel/setup.bash
-roslaunch uav_mpc publish_circle_traj.launch center_z:=1.5 radius:=1.5 linear_vel:=0.8 cycles:=15
+roslaunch uav_mpc publish_circle_traj.launch height:=1.5 radius:=1.5 linear_vel:=0.8 cycles:=15
 ```
-> 轨迹节点将在前 3 秒以平滑三次多项式过渡（无速度/加速度冲击）从悬停位置切入圆周，连续飞行 15 圈并历经 90~120s 突发阵风。
 
 ### 步骤 6：终端 6 运行多维度定量评估与对比绘图
 ```bash
 cd ~/Desktop/catkin_ws/src/quadrotor_mpc
 python3 scripts/evaluate_nmpc_vs_pid.py
 ```
-> 自动输出包含 **3D/各轴跟踪 RMSE**、**阵风抗扰放大率**、**瞬态峰值**、**角速度平滑度** 与 **能耗代理指标** 的对比表格，并在 `data/` 目录下生成高分辨率综合对比图 `simulation_evaluation_report.png`。
+> 自动加载 `data/` 目录下的实验数据，生成 **NMPC+ESO vs 纯NMPC vs PID** 的三方综合评测表格与高清对比图 `simulation_evaluation_report.png`。
 
 ---
 
-## 📊 二、 多维度评估指标体系
+## 🛠️ 二、 虚拟机桌面工作空间一键拉取与编译指令
 
-| 评估维度 | 指标名称 | 计算公式 / 说明 | 物理意义 |
-| :--- | :--- | :--- | :--- |
-| **1. 轨迹跟踪精度** | **3D Position RMSE** | $\sqrt{\frac{1}{N}\sum (e_x^2 + e_y^2 + e_z^2)}$ | 全程空间几何轨迹贴合精度 |
-| | **Max 3D Error** | $\max \|e_{\text{pos}}(t)\|$ | 最劣工况下的最大失轨距离 |
-| | **Per-axis RMSE** | $X, Y, Z$ 各轴独立均方根误差 | 评估风向（+X）对各通道的耦合偏差 |
-| **2. 抗风扰鲁棒性** | **Gust RMSE** | $t \in [90\text{s}, 120\text{s}]$ 内的 3D RMSE | 阵风扰动下的跟踪恶化程度 |
-| | **Gust Amplification Ratio** | $\text{RMSE}_{\text{gust}} / \text{RMSE}_{\text{calm}}$ | 扰动敏感度（越接近 1.0 抗扰越强） |
-| | **Gust Onset Peak Error** | $t \in [90\text{s}, 95\text{s}]$ 内的最大瞬态偏差 | 阶跃风扰撞击瞬间的动态恢复能力 |
-| **3. 控制平滑度** | **Body Rate RMS** | $\sqrt{\frac{1}{N}\sum (\omega_x^2 + \omega_y^2 + \omega_z^2)}$ | 机体姿态角速度动态激烈程度 |
-| | **Throttle Variance** | $\text{Var}(T)$ | 油门输出波动方差（反映执行机构应力） |
-| **4. 能耗代理指标** | **Power Proxy Integral** | $\int T(t)^{1.5} dt$ | 旋翼气动机械功率消耗代理积分 |
-| | **Control Effort Metric** | $\int (T^2 + 0.05\|\boldsymbol{\omega}\|^2) dt$ | 控制能量总开销 |
-
----
-
-## 🛠️ 三、 虚拟机桌面工作空间搭建与一键编译指令
-
-### 1. 首次在虚拟机桌面（Desktop）搭建工作空间与克隆代码
-```bash
-mkdir -p ~/Desktop/catkin_ws/src
-cd ~/Desktop/catkin_ws/src
-git clone -b dev-simulation https://github.com/martubuntu/quadrotor_mpc.git
-
-cd ~/Desktop/catkin_ws
-source /opt/ros/noetic/setup.bash
-catkin_make -DCMAKE_BUILD_TYPE=Release
-
-echo "source ~/Desktop/catkin_ws/devel/setup.bash" >> ~/.bashrc
-source ~/.bashrc
-```
-
-### 2. 后续拉取最新代码与一键增量编译
 ```bash
 cd ~/Desktop/catkin_ws/src/quadrotor_mpc
-./scripts/pull_and_build.sh
-```
+git fetch origin
+git checkout NMPC_trajok_simulation
+git pull origin NMPC_trajok_simulation
 
-### 3. PC 端推送修改至 GitHub 分支
-```bash
-git add .
-git commit -m "fix(sim): decouple takeoff and trajectory publisher, enhance thrust estimator and trajectory transition"
-git push origin dev-simulation
+cd ~/Desktop/catkin_ws
+catkin_make -DCMAKE_BUILD_TYPE=Release
 ```
