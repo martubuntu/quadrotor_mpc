@@ -120,11 +120,11 @@ public:
         traj_msg_ = *msg;
         goal_ << msg->goal.x, msg->goal.y, msg->goal.z;
 
-        if (mode_ == PID_HOVER && !reachGoal(current_odom_, goal_))
+        if ((mode_ == PID_HOVER || mode_ == PID_TAKEOFF) && !traj_msg_.mpc_ref_points.empty())
         {
             mode_ = PID_TRACKING;
             traj_received_ = true;
-            ROS_INFO("[PID Baseline] Circle Trajectory Received -> Switched to PID_TRACKING");
+            ROS_INFO("[PID Baseline] Trajectory Received -> Switched to PID_TRACKING");
         }
     }
 
@@ -281,7 +281,7 @@ public:
                     ref_pose.pose.orientation.w = std::cos(yaw * 0.5);
                     ref_pose.pose.orientation.z = std::sin(yaw * 0.5);
 
-                    if (reachGoal(current_odom_, goal_))
+                    if (goal_.norm() < 500.0 && reachGoal(current_odom_, goal_))
                     {
                         mode_ = PID_HOVER;
                         hover_odom_ = current_odom_;

@@ -225,10 +225,19 @@ public:
                 traj_msg.mpc_ref_points.push_back(point_msg);
             }
 
-            // Goal definition: 将 goal 设为圆心，防止巡航过程中误触 reachgoal()
-            traj_msg.goal.x = center_x_;
-            traj_msg.goal.y = center_y_;
-            traj_msg.goal.z = center_z_;
+            // Goal definition: 巡航过程中将 goal 设为远端，仅在完成全部圈数后指向终点
+            if (cycles_ > 0 && t_active >= total_circle_duration_)
+            {
+                traj_msg.goal.x = center_x_ + radius_;
+                traj_msg.goal.y = center_y_;
+                traj_msg.goal.z = center_z_;
+            }
+            else
+            {
+                traj_msg.goal.x = 9999.0;
+                traj_msg.goal.y = 9999.0;
+                traj_msg.goal.z = 9999.0;
+            }
 
             mpc_ref_pub_.publish(traj_msg);
 

@@ -159,11 +159,12 @@ void MPCRos::FSMProcess()
             fsm_switch = 0;
           }
           getTrajRef();
-          if(reachgoal(current_odom, goal))
+          if(goal.norm() < 500.0f && reachgoal(current_odom, goal))
           {
             mpc_mode = AUTO_HOVER;
             hover_odom = current_odom;
             fsm_switch = 1;
+            ROS_INFO("[MPC] Final goal reached -> Switched back to AUTO_HOVER");
           }
           wrapper->gerReference(reference);
           if(wrapper->getSolution(current_odom, control))
@@ -274,16 +275,13 @@ void MPCRos::imu_Callback(const sensor_msgs::Imu::ConstPtr& msg)
 void MPCRos::traj_Callback(const quadrotor_msgs::mpc_ref_traj::ConstPtr& msg)
 {
   traj_msg = *msg;
-
-  ROS_INFO("Trajectory");
-
   goal << msg->goal.x, msg->goal.y, msg->goal.z;
   
-  if(mpc_mode == AUTO_HOVER && !(reachgoal(current_odom, goal)))
+  if((mpc_mode == AUTO_HOVER || mpc_mode == AUTO_TAKEOFF) && !traj_msg.mpc_ref_points.empty())
   {
     mpc_mode = AUTO_TRACKING;
     fsm_switch = 1;
-    ROS_INFO("Trajectory Recieved");
+    ROS_INFO("[MPC] Trajectory received! Switched to AUTO_TRACKING.");
   }
 }
 
