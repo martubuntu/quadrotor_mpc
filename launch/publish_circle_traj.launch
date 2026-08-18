@@ -4,8 +4,12 @@
   <arg name="radius" default="1.5"/>
   <arg name="linear_vel" default="0.8"/>
   <arg name="height" default="1.5"/>
+  <arg name="transition_time" default="3.5"/>  <!-- Seconds to smoothly transition from hover center to circle entry point -->
   <arg name="cycles" default="15"/>            <!-- ~175s total flight, fully covering 90~120s wind gust -->
   <arg name="publish_rate" default="50.0"/>
+  <arg name="use_fixed_center" default="false"/> <!-- If true, uses center_x/center_y instead of actual hover pose -->
+  <arg name="center_x" default="0.0"/>
+  <arg name="center_y" default="0.0"/>
   <arg name="odom_topic" default="/mavros/local_position/odom"/>
 
   <!-- Start Circle Trajectory Publisher Node -->
@@ -13,8 +17,12 @@
     <param name="radius" value="$(arg radius)"/>
     <param name="linear_vel" value="$(arg linear_vel)"/>
     <param name="height" value="$(arg height)"/>
+    <param name="transition_time" value="$(arg transition_time)"/>
     <param name="cycles" value="$(arg cycles)"/>
     <param name="publish_rate" value="$(arg publish_rate)"/>
+    <param name="use_fixed_center" value="$(arg use_fixed_center)"/>
+    <param name="center_x" value="$(arg center_x)"/>
+    <param name="center_y" value="$(arg center_y)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
   </node>
 </launch>
