@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Multi-Dimensional Performance Evaluation: NMPC + ESO vs NMPC vs PID Baseline
+Multi-Dimensional Academic Performance Evaluation: NMPC + ESO vs NMPC vs PID Baseline
 Simulation under Wind Gust Disturbance (90s ~ 120s, 3.0 m/s +X)
+
+Metrics include:
+  1. 3D Position Tracking RMSE & Max/Mean Error
+  2. Attitude Tracking RMSE (Roll, Pitch, Yaw)
+  3. ESO Disturbance Rejection Metrics (Steady-State Bias, IAE, ITAE, Settling Time, Amplification)
+  4. Control Smoothness, Chattering Index (Total Variation) & Energy Efficiency
 
 Usage:
     python3 evaluate_nmpc_vs_pid.py [nmpc_eso_log.csv] [nmpc_log.csv] [pid_log.csv]
@@ -40,6 +46,7 @@ def calculate_metrics(df, label=""):
     # Time segments
     calm = df_track[(df_track["time_sec"] >= 20.0) & (df_track["time_sec"] < GUST_START)]
     gust = df_track[(df_track["time_sec"] >= GUST_START) & (df_track["time_sec"] <= GUST_END)]
+    gust_steady = df_track[(df_track["time_sec"] >= GUST_START + 5.0) & (df_track["time_sec"] <= GUST_END - 5.0)]
     transient = df_track[(df_track["time_sec"] >= GUST_START) & (df_track["time_sec"] <= GUST_START + 5.0)]
 
     # 1. 3D Position Tracking Errors
@@ -59,13 +66,44 @@ def calculate_metrics(df, label=""):
         rmse_pitch = float(np.sqrt(np.mean(df_track["err_pitch_deg"]**2)))
         rmse_yaw = float(np.sqrt(np.mean(df_track["err_yaw_deg"]**2)))
 
-    # 3. Disturbance Rejection Metrics
+    # 3. Wind Disturbance Rejection & Steady-State Error Metrics (ESO Focus)
     rmse_calm = float(np.sqrt(np.mean(calm["err_pos_norm"]**2))) if not calm.empty else rmse_3d
     rmse_gust = float(np.sqrt(np.mean(gust["err_pos_norm"]**2))) if not gust.empty else rmse_3d
     gust_amp_ratio = float(rmse_gust / rmse_calm) if rmse_calm > 1e-4 else 1.0
     transient_peak = float(np.max(transient["err_pos_norm"])) if not transient.empty else max_err
 
-    # 4. Control Smoothness (Body Rates)
+    # Steady-state bias in wind axis (+X) during stable gust window
+    if not gust_steady.empty:
+        gust_ss_bias_x = float(np.mean(np.abs(gust_steady["err_x"])))
+        gust_ss_bias_3d = float(np.mean(gust_steady["err_pos_norm"]))
+    else:
+        gust_ss_bias_x = float(np.mean(np.abs(gust["err_x"]))) if not gust.empty else rmse_x
+        gust_ss_bias_3d = float(np.mean(gust["err_pos_norm"])) if not gust.empty else rmse_3d
+
+    # IAE & ITAE Integral Error Criteria during Gust Phase (90s ~ 120s)
+    if not gust.empty and len(gust) > 2:
+        t_gust = gust["time_sec"].values
+        dt_gust = np.diff(t_gust)
+        dt_arr = np.concatenate([[dt_gust[0]], dt_gust])
+        tau = np.maximum(0.0, t_gust - GUST_START)
+        e_norm = gust["err_pos_norm"].values
+        iae_gust = float(np.sum(e_norm * dt_arr))
+        itae_gust = float(np.sum(tau * e_norm * dt_arr))
+
+        # Gust settling/recovery time (time to return and stay within threshold)
+        recovery_thresh = max(0.08, 1.25 * rmse_calm)
+        settled_mask = (e_norm <= recovery_thresh)
+        settling_time = 30.0 # default full window if never settled
+        for i in range(len(t_gust)):
+            if t_gust[i] >= GUST_START + 0.3 and np.all(settled_mask[i:min(i+15, len(settled_mask))]):
+                settling_time = float(t_gust[i] - GUST_START)
+                break
+    else:
+        iae_gust = rmse_gust * 30.0
+        itae_gust = rmse_gust * 450.0
+        settling_time = 30.0
+
+    # 4. Control Smoothness & Total Variation (TV)
     if "imu_wx" in df_track.columns and (df_track["imu_wx"]**2 + df_track["imu_wy"]**2).sum() > 1e-3:
         body_rate_norm = np.sqrt(df_track["imu_wx"]**2 + df_track["imu_wy"]**2 + df_track["imu_wz"]**2)
     elif "ctrl_wx" in df_track.columns and (df_track["ctrl_wx"]**2 + df_track["ctrl_wy"]**2 + df_track["ctrl_wz"]**2).sum() > 1e-3:
@@ -79,6 +117,7 @@ def calculate_metrics(df, label=""):
         body_rate_norm = np.sqrt(ax**2 + ay**2) / 9.8066
 
     rate_rms = float(np.sqrt(np.mean(body_rate_norm**2)))
+    control_tv = float(np.sum(np.diff(body_rate_norm)**2)) if len(body_rate_norm) > 1 else 0.0
 
     # 5. Throttle Series & Variance
     thrust_series = df_track["cmd_thrust"].copy().astype(float)
@@ -108,7 +147,13 @@ def calculate_metrics(df, label=""):
         "rmse_gust": rmse_gust,
         "gust_amp_ratio": gust_amp_ratio,
         "transient_peak": transient_peak,
+        "gust_ss_bias_x": gust_ss_bias_x,
+        "gust_ss_bias_3d": gust_ss_bias_3d,
+        "iae_gust": iae_gust,
+        "itae_gust": itae_gust,
+        "settling_time": settling_time,
         "rate_rms": rate_rms,
+        "control_tv": control_tv,
         "thrust_var": thrust_var,
         "energy_power": energy_power_proxy,
         "energy_effort": energy_effort,
@@ -117,36 +162,53 @@ def calculate_metrics(df, label=""):
     }
 
 def print_comparison_table(m_eso, m_nmpc, m_pid):
-    print("\n" + "="*95)
-    print("      QUADROTOR TRAJECTORY TRACKING MULTI-DIMENSIONAL EVALUATION REPORT")
+    print("\n" + "="*100)
+    print("      ACADEMIC MULTI-DIMENSIONAL BENCHMARK REPORT: NMPC+ESO vs NMPC vs PID")
     print("      Wind Gust: 90s - 120s (+X 3.0 m/s) | Circle Radius: 1.5m, Vel: 0.8m/s")
-    print("="*95)
+    print("="*100)
 
-    headers = f"{'Performance Metric':<32} | {'NMPC + ESO':<12} | {'NMPC (Pure)':<12} | {'PID Baseline':<12} | {'ESO vs PID':<10}"
+    headers = f"{'Evaluation Metric Category':<34} | {'NMPC + ESO':<12} | {'NMPC (Pure)':<12} | {'PID Baseline':<12} | {'ESO vs PID':<10}"
     print(headers)
-    print("-"*95)
+    print("="*100)
 
-    comparisons = [
-        ("3D Position RMSE (m)", "rmse_3d", True),
-        ("  - X-axis RMSE (m)", "rmse_x", True),
-        ("  - Y-axis RMSE (m)", "rmse_y", True),
-        ("  - Z-axis RMSE (m)", "rmse_z", True),
-        ("Max 3D Tracking Error (m)", "max_err", True),
-        ("Mean 3D Tracking Error (m)", "mean_err", True),
-        ("Roll Tracking RMSE (deg)", "rmse_roll", True),
-        ("Pitch Tracking RMSE (deg)", "rmse_pitch", True),
-        ("Yaw Tracking RMSE (deg)", "rmse_yaw", True),
-        ("Calm Phase RMSE (20-90s) (m)", "rmse_calm", True),
-        ("Gust Phase RMSE (90-120s) (m)", "rmse_gust", True),
-        ("Gust Amplification Ratio", "gust_amp_ratio", True),
-        ("Gust Onset Peak Error (m)", "transient_peak", True),
-        ("Body Rate RMS (rad/s)", "rate_rms", True),
-        ("Throttle Variance (Var)", "thrust_var", True),
-        ("Aerodynamic Power Proxy (J)", "energy_power", True),
-        ("Control Effort Metric", "energy_effort", True),
+    sections = [
+        ("--- 1. Trajectory Tracking Accuracy ---", None),
+        ("3D Position RMSE (m)", "rmse_3d"),
+        ("  - X-axis RMSE (m)", "rmse_x"),
+        ("  - Y-axis RMSE (m)", "rmse_y"),
+        ("  - Z-axis RMSE (m)", "rmse_z"),
+        ("Max 3D Tracking Error (m)", "max_err"),
+        ("Mean 3D Tracking Error (m)", "mean_err"),
+
+        ("--- 2. Attitude Tracking Dynamics ---", None),
+        ("Roll Tracking RMSE (deg)", "rmse_roll"),
+        ("Pitch Tracking RMSE (deg)", "rmse_pitch"),
+        ("Yaw Tracking RMSE (deg)", "rmse_yaw"),
+
+        ("--- 3. Wind Rejection & ESO Superiority ---", None),
+        ("Gust Steady-State Bias X (m)", "gust_ss_bias_x"),
+        ("Gust Phase 3D RMSE (90-120s) (m)", "rmse_gust"),
+        ("Calm Phase 3D RMSE (20-90s) (m)", "rmse_calm"),
+        ("Gust Degradation Ratio (Rg)", "gust_amp_ratio"),
+        ("Gust Onset Peak Error (m)", "transient_peak"),
+        ("Gust Settling Time Ts (s)", "settling_time"),
+        ("Gust Integral Abs Error IAE (m*s)", "iae_gust"),
+        ("Gust Time-weighted ITAE (m*s^2)", "itae_gust"),
+
+        ("--- 4. Smoothness & Energy Efficiency ---", None),
+        ("Body Rate RMS (rad/s)", "rate_rms"),
+        ("Control Variation / TV Metric", "control_tv"),
+        ("Throttle Variance (Var)", "thrust_var"),
+        ("Aerodynamic Power Proxy (J)", "energy_power"),
+        ("Control Effort Metric", "energy_effort"),
     ]
 
-    for title, key, lower_is_better in comparisons:
+    for title, key in sections:
+        if key is None:
+            print(f"\n{title:<100}")
+            print("-" * 100)
+            continue
+
         v_eso = m_eso.get(key) if m_eso else None
         v_nmpc = m_nmpc.get(key) if m_nmpc else None
         v_pid = m_pid.get(key) if m_pid else None
@@ -158,13 +220,13 @@ def print_comparison_table(m_eso, m_nmpc, m_pid):
         # Calculate improvement of primary vs PID
         v_main = v_eso if v_eso is not None else v_nmpc
         if v_main is not None and v_pid is not None and v_pid != 0:
-            pct = (v_pid - v_main) / v_pid * 100.0 if lower_is_better else (v_main - v_pid) / v_pid * 100.0
+            pct = (v_pid - v_main) / v_pid * 100.0
             str_imp = f"{pct:+.1f}%" if abs(pct) > 0.01 else "0.0%"
         else:
             str_imp = "N/A"
 
-        print(f"{title:<32} | {str_eso} | {str_nmpc} | {str_pid} | {str_imp:<10}")
-    print("="*95 + "\n")
+        print(f"{title:<34} | {str_eso} | {str_nmpc} | {str_pid} | {str_imp:<10}")
+    print("="*100 + "\n")
 
 def plot_comparison(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
     fig = plt.figure(figsize=(18, 12))
@@ -207,7 +269,7 @@ def plot_comparison(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
 
     # 3. Attitude Response (Pitch Angle vs Time) - Direct visual of wind resistance
     ax3 = fig.add_subplot(2, 2, 3)
-    ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust")
+    ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window")
     has_att_plot = False
     if df_eso is not None and "pitch_deg" in df_eso.columns:
         ax3.plot(df_eso["time_sec"], df_eso["pitch_deg"], "g-", label="NMPC+ESO Pitch (°)", linewidth=1.8)
@@ -220,7 +282,6 @@ def plot_comparison(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
         has_att_plot = True
 
     if not has_att_plot:
-        # Fallback to Throttle Response
         if df_eso is not None and m_eso is not None:
             t_eso = df_eso[df_eso["time_sec"] >= 15.0]
             ax3.plot(t_eso["time_sec"], m_eso["thrust_series"], "g-", label="NMPC+ESO Thrust", linewidth=1.8)
@@ -234,7 +295,7 @@ def plot_comparison(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
         ax3.set_title("Throttle Response under Wind Disturbance")
     else:
         ax3.set_ylabel("Pitch Angle (deg)")
-        ax3.set_title("Attitude Pitch Response under Wind Disturbance")
+        ax3.set_title("Attitude Pitch Angle Response under Wind Disturbance")
 
     ax3.set_xlabel("Time (s)")
     ax3.grid(True, linestyle="--", alpha=0.6)
@@ -242,27 +303,27 @@ def plot_comparison(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
 
     # 4. Multi-Dimensional Performance Bar Chart
     ax4 = fig.add_subplot(2, 2, 4)
-    categories = ["3D RMSE (m)", "Gust RMSE (m)", "Peak Err (m)", "Rate RMS (rad/s)"]
+    categories = ["3D RMSE (m)", "Gust RMSE (m)", "Gust Bias X (m)", "ITAE/100 (m*s²)"]
     x = np.arange(len(categories))
     width = 0.25
 
     offset = -width if df_eso is not None and df_nmpc is not None and df_pid is not None else -width/2
     if df_eso is not None and m_eso is not None:
-        vals = [m_eso["rmse_3d"], m_eso["rmse_gust"], m_eso["transient_peak"], m_eso["rate_rms"]]
+        vals = [m_eso["rmse_3d"], m_eso["rmse_gust"], m_eso["gust_ss_bias_x"], m_eso["itae_gust"]/100.0]
         ax4.bar(x + offset, vals, width, label="NMPC+ESO", color="mediumseagreen")
         offset += width
 
     if df_nmpc is not None and m_nmpc is not None:
-        vals = [m_nmpc["rmse_3d"], m_nmpc["rmse_gust"], m_nmpc["transient_peak"], m_nmpc["rate_rms"]]
+        vals = [m_nmpc["rmse_3d"], m_nmpc["rmse_gust"], m_nmpc["gust_ss_bias_x"], m_nmpc["itae_gust"]/100.0]
         ax4.bar(x + offset, vals, width, label="NMPC Pure", color="royalblue")
         offset += width
 
     if df_pid is not None and m_pid is not None:
-        vals = [m_pid["rmse_3d"], m_pid["rmse_gust"], m_pid["transient_peak"], m_pid["rate_rms"]]
+        vals = [m_pid["rmse_3d"], m_pid["rmse_gust"], m_pid["gust_ss_bias_x"], m_pid["itae_gust"]/100.0]
         ax4.bar(x + offset, vals, width, label="PID Baseline", color="salmon")
 
     ax4.set_ylabel("Metric Value")
-    ax4.set_title("Multi-Dimensional Performance Comparison")
+    ax4.set_title("Key Disturbance Rejection Comparison (ESO Highlights)")
     ax4.set_xticks(x)
     ax4.set_xticklabels(categories)
     ax4.legend()
