@@ -42,7 +42,7 @@ def calculate_metrics(df, label=""):
     gust = df_track[(df_track["time_sec"] >= GUST_START) & (df_track["time_sec"] <= GUST_END)]
     transient = df_track[(df_track["time_sec"] >= GUST_START) & (df_track["time_sec"] <= GUST_START + 5.0)]
 
-    # 1. Tracking Errors
+    # 1. 3D Position Tracking Errors
     rmse_3d = float(np.sqrt(np.mean(df_track["err_pos_norm"]**2)))
     rmse_x = float(np.sqrt(np.mean(df_track["err_x"]**2)))
     rmse_y = float(np.sqrt(np.mean(df_track["err_y"]**2)))
@@ -50,13 +50,22 @@ def calculate_metrics(df, label=""):
     max_err = float(np.max(df_track["err_pos_norm"]))
     mean_err = float(np.mean(df_track["err_pos_norm"]))
 
-    # 2. Disturbance Rejection Metrics
+    # 2. Attitude Tracking Errors (Degrees)
+    rmse_roll = None
+    rmse_pitch = None
+    rmse_yaw = None
+    if "err_roll_deg" in df_track.columns and "err_pitch_deg" in df_track.columns and "err_yaw_deg" in df_track.columns:
+        rmse_roll = float(np.sqrt(np.mean(df_track["err_roll_deg"]**2)))
+        rmse_pitch = float(np.sqrt(np.mean(df_track["err_pitch_deg"]**2)))
+        rmse_yaw = float(np.sqrt(np.mean(df_track["err_yaw_deg"]**2)))
+
+    # 3. Disturbance Rejection Metrics
     rmse_calm = float(np.sqrt(np.mean(calm["err_pos_norm"]**2))) if not calm.empty else rmse_3d
     rmse_gust = float(np.sqrt(np.mean(gust["err_pos_norm"]**2))) if not gust.empty else rmse_3d
     gust_amp_ratio = float(rmse_gust / rmse_calm) if rmse_calm > 1e-4 else 1.0
     transient_peak = float(np.max(transient["err_pos_norm"])) if not transient.empty else max_err
 
-    # 3. Control Smoothness (Body Rates)
+    # 4. Control Smoothness (Body Rates)
     if "imu_wx" in df_track.columns and (df_track["imu_wx"]**2 + df_track["imu_wy"]**2).sum() > 1e-3:
         body_rate_norm = np.sqrt(df_track["imu_wx"]**2 + df_track["imu_wy"]**2 + df_track["imu_wz"]**2)
     elif "ctrl_wx" in df_track.columns and (df_track["ctrl_wx"]**2 + df_track["ctrl_wy"]**2 + df_track["ctrl_wz"]**2).sum() > 1e-3:
@@ -71,7 +80,7 @@ def calculate_metrics(df, label=""):
 
     rate_rms = float(np.sqrt(np.mean(body_rate_norm**2)))
 
-    # 4. Throttle Series & Variance
+    # 5. Throttle Series & Variance
     thrust_series = df_track["cmd_thrust"].copy().astype(float)
     if thrust_series.sum() < 1e-3 and "imu_acc_z" in df_track.columns:
         hover_ratio = 9.8066 / 0.58
@@ -79,7 +88,7 @@ def calculate_metrics(df, label=""):
     
     thrust_var = float(np.var(thrust_series))
 
-    # 5. Energy Metrics
+    # 6. Energy Metrics
     dt = float(np.median(np.diff(df_track["time_sec"]))) if len(df_track) > 1 else 0.05
     energy_power_proxy = float(np.sum(thrust_series**1.5) * dt)
     energy_effort = float(np.sum(thrust_series**2 + 0.05 * (body_rate_norm**2)) * dt)
@@ -90,6 +99,9 @@ def calculate_metrics(df, label=""):
         "rmse_x": rmse_x,
         "rmse_y": rmse_y,
         "rmse_z": rmse_z,
+        "rmse_roll": rmse_roll,
+        "rmse_pitch": rmse_pitch,
+        "rmse_yaw": rmse_yaw,
         "max_err": max_err,
         "mean_err": mean_err,
         "rmse_calm": rmse_calm,
@@ -121,6 +133,9 @@ def print_comparison_table(m_eso, m_nmpc, m_pid):
         ("  - Z-axis RMSE (m)", "rmse_z", True),
         ("Max 3D Tracking Error (m)", "max_err", True),
         ("Mean 3D Tracking Error (m)", "mean_err", True),
+        ("Roll Tracking RMSE (deg)", "rmse_roll", True),
+        ("Pitch Tracking RMSE (deg)", "rmse_pitch", True),
+        ("Yaw Tracking RMSE (deg)", "rmse_yaw", True),
         ("Calm Phase RMSE (20-90s) (m)", "rmse_calm", True),
         ("Gust Phase RMSE (90-120s) (m)", "rmse_gust", True),
         ("Gust Amplification Ratio", "gust_amp_ratio", True),
@@ -132,9 +147,9 @@ def print_comparison_table(m_eso, m_nmpc, m_pid):
     ]
 
     for title, key, lower_is_better in comparisons:
-        v_eso = m_eso[key] if m_eso else None
-        v_nmpc = m_nmpc[key] if m_nmpc else None
-        v_pid = m_pid[key] if m_pid else None
+        v_eso = m_eso.get(key) if m_eso else None
+        v_nmpc = m_nmpc.get(key) if m_nmpc else None
+        v_pid = m_pid.get(key) if m_pid else None
 
         str_eso = f"{v_eso:<12.4f}" if v_eso is not None else f"{'N/A':<12}"
         str_nmpc = f"{v_nmpc:<12.4f}" if v_nmpc is not None else f"{'N/A':<12}"
@@ -190,22 +205,38 @@ def plot_comparison(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
     ax2.grid(True, linestyle="--", alpha=0.6)
     ax2.legend(loc="upper right")
 
-    # 3. Throttle Response
+    # 3. Attitude Response (Pitch Angle vs Time) - Direct visual of wind resistance
     ax3 = fig.add_subplot(2, 2, 3)
     ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust")
-    if df_eso is not None and m_eso is not None:
-        t_eso = df_eso[df_eso["time_sec"] >= 15.0]
-        ax3.plot(t_eso["time_sec"], m_eso["thrust_series"], "g-", label="NMPC+ESO Thrust", linewidth=1.8)
-    if df_nmpc is not None and m_nmpc is not None:
-        t_nmpc = df_nmpc[df_nmpc["time_sec"] >= 15.0]
-        ax3.plot(t_nmpc["time_sec"], m_nmpc["thrust_series"], "b-.", label="NMPC Pure Thrust", linewidth=1.5)
-    if df_pid is not None and m_pid is not None:
-        t_pid = df_pid[df_pid["time_sec"] >= 15.0]
-        ax3.plot(t_pid["time_sec"], m_pid["thrust_series"], "r:", label="PID Equivalent Thrust", linewidth=1.3, alpha=0.7)
-    
+    has_att_plot = False
+    if df_eso is not None and "pitch_deg" in df_eso.columns:
+        ax3.plot(df_eso["time_sec"], df_eso["pitch_deg"], "g-", label="NMPC+ESO Pitch (°)", linewidth=1.8)
+        has_att_plot = True
+    if df_nmpc is not None and "pitch_deg" in df_nmpc.columns:
+        ax3.plot(df_nmpc["time_sec"], df_nmpc["pitch_deg"], "b-.", label="NMPC Pure Pitch (°)", linewidth=1.5)
+        has_att_plot = True
+    if df_pid is not None and "pitch_deg" in df_pid.columns:
+        ax3.plot(df_pid["time_sec"], df_pid["pitch_deg"], "r:", label="PID Pitch (°)", linewidth=1.3, alpha=0.7)
+        has_att_plot = True
+
+    if not has_att_plot:
+        # Fallback to Throttle Response
+        if df_eso is not None and m_eso is not None:
+            t_eso = df_eso[df_eso["time_sec"] >= 15.0]
+            ax3.plot(t_eso["time_sec"], m_eso["thrust_series"], "g-", label="NMPC+ESO Thrust", linewidth=1.8)
+        if df_nmpc is not None and m_nmpc is not None:
+            t_nmpc = df_nmpc[df_nmpc["time_sec"] >= 15.0]
+            ax3.plot(t_nmpc["time_sec"], m_nmpc["thrust_series"], "b-.", label="NMPC Pure Thrust", linewidth=1.5)
+        if df_pid is not None and m_pid is not None:
+            t_pid = df_pid[df_pid["time_sec"] >= 15.0]
+            ax3.plot(t_pid["time_sec"], m_pid["thrust_series"], "r:", label="PID Equivalent Thrust", linewidth=1.3, alpha=0.7)
+        ax3.set_ylabel("Thrust (Normalized 0~1)")
+        ax3.set_title("Throttle Response under Wind Disturbance")
+    else:
+        ax3.set_ylabel("Pitch Angle (deg)")
+        ax3.set_title("Attitude Pitch Response under Wind Disturbance")
+
     ax3.set_xlabel("Time (s)")
-    ax3.set_ylabel("Thrust (Normalized 0~1)")
-    ax3.set_title("Throttle Response under Wind Disturbance")
     ax3.grid(True, linestyle="--", alpha=0.6)
     ax3.legend(loc="upper right")
 

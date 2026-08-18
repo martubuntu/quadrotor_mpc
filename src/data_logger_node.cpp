@@ -8,6 +8,8 @@
 #include <std_msgs/Int8.h>
 #include <mavros_msgs/AttitudeTarget.h>
 #include <sensor_msgs/Imu.h>
+#include <Eigen/Dense>
+#include <Eigen/Geometry>
 #include <fstream>
 #include <iostream>
 #include <iomanip>
@@ -36,8 +38,9 @@ private:
     ros::Publisher pub_vel_error_;
     ros::Publisher pub_pos_error_norm_;
     ros::Publisher pub_vel_error_norm_;
-    ros::Publisher pub_rate_error_;
-    ros::Publisher pub_rate_error_norm_;
+    ros::Publisher pub_att_rpy_;
+    ros::Publisher pub_ref_att_rpy_;
+    ros::Publisher pub_att_error_rpy_;
 
     // State Variables
     nav_msgs::Odometry current_odom_;
@@ -58,6 +61,21 @@ private:
     double log_rate_;
     ros::Time start_time_;
     int record_count_;
+
+    // Helper: Quaternion to Euler angles in degrees (Roll, Pitch, Yaw)
+    void quatToEulerDeg(const Eigen::Quaterniond& q, double& roll_deg, double& pitch_deg, double& yaw_deg)
+    {
+        double roll_rad = std::atan2(2.0 * (q.w() * q.x() + q.y() * q.z()),
+                                     1.0 - 2.0 * (q.x() * q.x() + q.y() * q.y()));
+        double sinp = 2.0 * (q.w() * q.y() - q.z() * q.x());
+        double pitch_rad = (std::abs(sinp) >= 1.0) ? std::copysign(M_PI / 2.0, sinp) : std::asin(sinp);
+        double yaw_rad = std::atan2(2.0 * (q.w() * q.z() + q.x() * q.y()),
+                                    1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z()));
+
+        roll_deg = roll_rad * 180.0 / M_PI;
+        pitch_deg = pitch_rad * 180.0 / M_PI;
+        yaw_deg = yaw_rad * 180.0 / M_PI;
+    }
 
 public:
     DataLogger(ros::NodeHandle &nh) : nh_(nh), mpc_mode_(-1), estimated_hover_thrust_(0.58),
@@ -102,12 +120,15 @@ public:
         csv_file_.open(csv_filepath_);
         if (csv_file_.is_open())
         {
-            // Write CSV Header
+            // Write Comprehensive CSV Header including full Attitude metrics
             csv_file_ << "timestamp,time_sec,mode,"
                       << "pos_x,pos_y,pos_z,"
                       << "ref_x,ref_y,ref_z,"
                       << "err_x,err_y,err_z,err_pos_norm,"
                       << "vel_x,vel_y,vel_z,"
+                      << "roll_deg,pitch_deg,yaw_deg,"
+                      << "ref_roll_deg,ref_pitch_deg,ref_yaw_deg,"
+                      << "err_roll_deg,err_pitch_deg,err_yaw_deg,"
                       << "ctrl_acc_z,ctrl_wx,ctrl_wy,ctrl_wz,"
                       << "cmd_thrust,estimated_hover_thrust,imu_acc_z,"
                       << "imu_wx,imu_wy,imu_wz,"
@@ -133,13 +154,15 @@ public:
         imu_sub_ = nh_.subscribe<sensor_msgs::Imu>("/mavros/imu/data", 10, &DataLogger::imuCallback, this);
         eso_sub_ = nh_.subscribe<geometry_msgs::Vector3Stamped>("/eso/disturbance", 10, &DataLogger::esoCallback, this);
 
-        // Setup Real-time Error Publishers
+        // Setup Real-time Error & Attitude Publishers
         pub_pos_error_ = nh_.advertise<geometry_msgs::Vector3Stamped>("/mpc_debug/pos_error_3d", 1);
         pub_vel_error_ = nh_.advertise<geometry_msgs::Vector3Stamped>("/mpc_debug/vel_error_3d", 1);
         pub_pos_error_norm_ = nh_.advertise<std_msgs::Float64>("/mpc_debug/pos_error_norm", 1);
         pub_vel_error_norm_ = nh_.advertise<std_msgs::Float64>("/mpc_debug/vel_error_norm", 1);
-        pub_rate_error_ = nh_.advertise<geometry_msgs::Vector3Stamped>("/mpc_debug/rate_error_3d", 1);
-        pub_rate_error_norm_ = nh_.advertise<std_msgs::Float64>("/mpc_debug/rate_error_norm", 1);
+
+        pub_att_rpy_ = nh_.advertise<geometry_msgs::Vector3Stamped>("/mpc_debug/attitude_rpy_deg", 1);
+        pub_ref_att_rpy_ = nh_.advertise<geometry_msgs::Vector3Stamped>("/mpc_debug/ref_attitude_rpy_deg", 1);
+        pub_att_error_rpy_ = nh_.advertise<geometry_msgs::Vector3Stamped>("/mpc_debug/attitude_error_rpy_deg", 1);
     }
 
     ~DataLogger()
@@ -220,20 +243,47 @@ public:
 
             if (has_odom_ && has_ref_)
             {
-                // Position error (ref - real)
+                // 1. Position error (ref - real)
                 double ex = ref_pose_.pose.position.x - current_odom_.pose.pose.position.x;
                 double ey = ref_pose_.pose.position.y - current_odom_.pose.pose.position.y;
                 double ez = ref_pose_.pose.position.z - current_odom_.pose.pose.position.z;
                 double pos_err_norm = std::sqrt(ex * ex + ey * ey + ez * ez);
 
-                // Fallback for command_thrust if PID runs position control without attitude stream
+                // 2. Attitude & Reference Attitude (Euler in degrees)
+                Eigen::Quaterniond q_real(
+                    current_odom_.pose.pose.orientation.w,
+                    current_odom_.pose.pose.orientation.x,
+                    current_odom_.pose.pose.orientation.y,
+                    current_odom_.pose.pose.orientation.z);
+                if (q_real.norm() > 1e-4) q_real.normalize();
+
+                Eigen::Quaterniond q_ref(
+                    ref_pose_.pose.orientation.w,
+                    ref_pose_.pose.orientation.x,
+                    ref_pose_.pose.orientation.y,
+                    ref_pose_.pose.orientation.z);
+                if (q_ref.norm() > 1e-4) q_ref.normalize();
+
+                double roll_deg = 0.0, pitch_deg = 0.0, yaw_deg = 0.0;
+                double ref_roll_deg = 0.0, ref_pitch_deg = 0.0, ref_yaw_deg = 0.0;
+
+                quatToEulerDeg(q_real, roll_deg, pitch_deg, yaw_deg);
+                quatToEulerDeg(q_ref, ref_roll_deg, ref_pitch_deg, ref_yaw_deg);
+
+                double err_roll_deg = ref_roll_deg - roll_deg;
+                double err_pitch_deg = ref_pitch_deg - pitch_deg;
+                double err_yaw_deg = ref_yaw_deg - yaw_deg;
+                while (err_yaw_deg > 180.0) err_yaw_deg -= 360.0;
+                while (err_yaw_deg < -180.0) err_yaw_deg += 360.0;
+
+                // 3. Fallback for command_thrust if PID runs position control without attitude stream
                 double logged_thrust = command_thrust_;
                 if (logged_thrust < 0.05 && imu_acc_z_ > 1.0)
                 {
                     logged_thrust = std::min(0.95, std::max(0.15, imu_acc_z_ / (9.8066 / 0.58)));
                 }
 
-                // Publish real-time error messages
+                // 4. Publish real-time error & attitude topics
                 geometry_msgs::Vector3Stamped pos_err_msg;
                 pos_err_msg.header.stamp = now;
                 pos_err_msg.header.frame_id = "world";
@@ -246,25 +296,27 @@ public:
                 norm_msg.data = pos_err_norm;
                 pub_pos_error_norm_.publish(norm_msg);
 
-                // Publish real-time angular rate errors
-                double e_wx = raw_control_[1] - imu_wx_;
-                double e_wy = raw_control_[2] - imu_wy_;
-                double e_wz = raw_control_[3] - imu_wz_;
-                double rate_err_norm = std::sqrt(e_wx * e_wx + e_wy * e_wy + e_wz * e_wz);
+                geometry_msgs::Vector3Stamped att_msg, ref_att_msg, err_att_msg;
+                att_msg.header.stamp = now;
+                att_msg.header.frame_id = "base_link";
+                att_msg.vector.x = roll_deg;
+                att_msg.vector.y = pitch_deg;
+                att_msg.vector.z = yaw_deg;
+                pub_att_rpy_.publish(att_msg);
 
-                geometry_msgs::Vector3Stamped rate_err_msg;
-                rate_err_msg.header.stamp = now;
-                rate_err_msg.header.frame_id = "base_link";
-                rate_err_msg.vector.x = e_wx;
-                rate_err_msg.vector.y = e_wy;
-                rate_err_msg.vector.z = e_wz;
-                pub_rate_error_.publish(rate_err_msg);
+                ref_att_msg.header = att_msg.header;
+                ref_att_msg.vector.x = ref_roll_deg;
+                ref_att_msg.vector.y = ref_pitch_deg;
+                ref_att_msg.vector.z = ref_yaw_deg;
+                pub_ref_att_rpy_.publish(ref_att_msg);
 
-                std_msgs::Float64 rate_norm_msg;
-                rate_norm_msg.data = rate_err_norm;
-                pub_rate_error_norm_.publish(rate_norm_msg);
+                err_att_msg.header = att_msg.header;
+                err_att_msg.vector.x = err_roll_deg;
+                err_att_msg.vector.y = err_pitch_deg;
+                err_att_msg.vector.z = err_yaw_deg;
+                pub_att_error_rpy_.publish(err_att_msg);
 
-                // Write to CSV file
+                // 5. Write to CSV file
                 if (csv_file_.is_open())
                 {
                     csv_file_ << std::fixed << std::setprecision(4)
@@ -282,6 +334,9 @@ public:
                               << current_odom_.twist.twist.linear.x << ","
                               << current_odom_.twist.twist.linear.y << ","
                               << current_odom_.twist.twist.linear.z << ","
+                              << roll_deg << "," << pitch_deg << "," << yaw_deg << ","
+                              << ref_roll_deg << "," << ref_pitch_deg << "," << ref_yaw_deg << ","
+                              << err_roll_deg << "," << err_pitch_deg << "," << err_yaw_deg << ","
                               << raw_control_[0] << ","
                               << raw_control_[1] << ","
                               << raw_control_[2] << ","
@@ -298,20 +353,20 @@ public:
                     record_count_++;
                 }
 
-                // Console display at 1Hz
+                // 6. Real-time Console display at 1Hz (showing Position Error + Attitude Roll/Pitch/Yaw + ESO)
                 if ((now - last_print_time).toSec() >= 1.0)
                 {
                     last_print_time = now;
                     std::string mode_str = (mpc_mode_ == 0) ? "TAKEOFF" : (mpc_mode_ == 1) ? "HOVER" : (mpc_mode_ == 2) ? "TRACKING" : "WAIT";
                     if (has_eso_)
                     {
-                        ROS_INFO("[Logger] Mode: %-8s | PosErr: %.3fm (X:%.2f, Y:%.2f, Z:%.2f) | Thr: %.3f | ESO d_hat: [%+.2f, %+.2f, %+.2f]",
-                                 mode_str.c_str(), pos_err_norm, ex, ey, ez, logged_thrust, eso_dx_, eso_dy_, eso_dz_);
+                        ROS_INFO("[Logger] Mode: %-8s | PosErr: %.3fm (X:%.2f, Y:%.2f, Z:%.2f) | Att: [R:%+5.1f°, P:%+5.1f°, Y:%+5.1f°] | Thr: %.3f | ESO: [%+.2f, %+.2f, %+.2f]",
+                                 mode_str.c_str(), pos_err_norm, ex, ey, ez, roll_deg, pitch_deg, yaw_deg, logged_thrust, eso_dx_, eso_dy_, eso_dz_);
                     }
                     else
                     {
-                        ROS_INFO("[Logger] Mode: %-8s | PosErr: %.3fm (X:%.2f, Y:%.2f, Z:%.2f) | Thr: %.3f | HovEst: %.3f",
-                                 mode_str.c_str(), pos_err_norm, ex, ey, ez, logged_thrust, estimated_hover_thrust_);
+                        ROS_INFO("[Logger] Mode: %-8s | PosErr: %.3fm (X:%.2f, Y:%.2f, Z:%.2f) | Att: [R:%+5.1f°, P:%+5.1f°, Y:%+5.1f°] | Thr: %.3f | HovEst: %.3f",
+                                 mode_str.c_str(), pos_err_norm, ex, ey, ez, roll_deg, pitch_deg, yaw_deg, logged_thrust, estimated_hover_thrust_);
                     }
                 }
             }
