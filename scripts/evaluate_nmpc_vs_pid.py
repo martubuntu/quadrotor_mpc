@@ -262,21 +262,38 @@ def main():
     if eso_file and os.path.exists(eso_file):
         print(f"Loading NMPC+ESO Log: {eso_file}")
         df_eso = pd.read_csv(eso_file)
-        m_eso = calculate_metrics(df_eso, "NMPC_ESO")
 
     if nmpc_file and os.path.exists(nmpc_file):
         print(f"Loading NMPC Pure Log: {nmpc_file}")
         df_nmpc = pd.read_csv(nmpc_file)
-        m_nmpc = calculate_metrics(df_nmpc, "NMPC")
 
     if pid_file and os.path.exists(pid_file):
         print(f"Loading PID Log      : {pid_file}")
         df_pid = pd.read_csv(pid_file)
-        m_pid = calculate_metrics(df_pid, "PID")
 
-    if m_eso is None and m_nmpc is None:
+    if df_eso is None and df_nmpc is None:
         print(f"[Error] No NMPC or NMPC_ESO flight logs found in {data_dir}")
         sys.exit(1)
+
+    # Automatically synchronize and crop to common overlapping time window
+    max_times = [df["time_sec"].max() for df in [df_eso, df_nmpc, df_pid] if df is not None]
+    if max_times:
+        t_max_common = min(max_times)
+        if t_max_common >= 20.0:
+            print(f"[Time Sync] Synchronizing comparison to common overlapping window: 15.0s ~ {t_max_common:.1f}s")
+            if df_eso is not None:
+                df_eso = df_eso[df_eso["time_sec"] <= t_max_common].copy()
+            if df_nmpc is not None:
+                df_nmpc = df_nmpc[df_nmpc["time_sec"] <= t_max_common].copy()
+            if df_pid is not None:
+                df_pid = df_pid[df_pid["time_sec"] <= t_max_common].copy()
+
+    if df_eso is not None:
+        m_eso = calculate_metrics(df_eso, "NMPC_ESO")
+    if df_nmpc is not None:
+        m_nmpc = calculate_metrics(df_nmpc, "NMPC")
+    if df_pid is not None:
+        m_pid = calculate_metrics(df_pid, "PID")
 
     print_comparison_table(m_eso, m_nmpc, m_pid)
 
