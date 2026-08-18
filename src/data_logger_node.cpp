@@ -47,7 +47,7 @@ private:
     double imu_acc_z_;
     double imu_wx_, imu_wy_, imu_wz_;
     double eso_dx_, eso_dy_, eso_dz_;
-    bool has_odom_, has_ref_;
+    bool has_odom_, has_ref_, has_eso_;
 
     // Logging
     std::ofstream csv_file_;
@@ -62,7 +62,7 @@ public:
                                       command_thrust_(0.0), imu_acc_z_(9.8066),
                                       imu_wx_(0.0), imu_wy_(0.0), imu_wz_(0.0),
                                       eso_dx_(0.0), eso_dy_(0.0), eso_dz_(0.0),
-                                      has_odom_(false), has_ref_(false), record_count_(0)
+                                      has_odom_(false), has_ref_(false), has_eso_(false), record_count_(0)
                                       
     {
         std::string odom_topic;
@@ -199,6 +199,7 @@ public:
         eso_dx_ = msg->vector.x;
         eso_dy_ = msg->vector.y;
         eso_dz_ = msg->vector.z;
+        has_eso_ = true;
     }
 
     void spin()
@@ -280,14 +281,14 @@ public:
                 {
                     last_print_time = now;
                     std::string mode_str = (mpc_mode_ == 0) ? "TAKEOFF" : (mpc_mode_ == 1) ? "HOVER" : (mpc_mode_ == 2) ? "TRACKING" : "WAIT";
-                    if (std::abs(eso_dx_) > 0.01 || std::abs(eso_dy_) > 0.01 || std::abs(eso_dz_) > 0.01)
+                    if (has_eso_)
                     {
-                        ROS_INFO("[Logger] Mode: %-8s | PosErr: %.3f m (X:%.2f, Y:%.2f, Z:%.2f) | Thr: %.3f | ESO d_hat: [%+5.2f, %+5.2f, %+5.2f] m/s^2",
+                        ROS_INFO("[Logger] Mode: %-8s | PosErr: %.3fm (X:%.2f, Y:%.2f, Z:%.2f) | Thr: %.3f | ESO d_hat: [%+.2f, %+.2f, %+.2f]",
                                  mode_str.c_str(), pos_err_norm, ex, ey, ez, logged_thrust, eso_dx_, eso_dy_, eso_dz_);
                     }
                     else
                     {
-                        ROS_INFO("[Logger] Mode: %-8s | PosErr: %.3f m (X:%.2f, Y:%.2f, Z:%.2f) | Thr: %.3f | HovEst: %.3f",
+                        ROS_INFO("[Logger] Mode: %-8s | PosErr: %.3fm (X:%.2f, Y:%.2f, Z:%.2f) | Thr: %.3f | HovEst: %.3f",
                                  mode_str.c_str(), pos_err_norm, ex, ey, ez, logged_thrust, estimated_hover_thrust_);
                     }
                 }

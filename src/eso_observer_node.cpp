@@ -16,8 +16,7 @@ class ESOObserver
 public:
     ESOObserver()
         : nh_(),
-          pnh_("~"),
-          frame_count_(0)
+          pnh_("~")
     {
         pnh_.param("observer_bw", observer_bw_, 4.0);
         pnh_.param("disturbance_limit", disturbance_limit_, 5.0);
@@ -74,6 +73,8 @@ public:
         hover_thrust_ = 0.58; // Iris simulation default
 
         mpc_mode_ = 0;
+        step_count_ = 0;
+        current_rate_hz_ = 0.0;
         last_print_time_ = ros::Time::now();
 
         ROS_INFO("[ESO] Observer initialized. Bandwidth = %.2f rad/s (b1=%.2f, b2=%.2f, b3=%.2f), Limit = %.1f m/s^2",
@@ -100,15 +101,13 @@ private:
 
         last_stamp_ = stamp;
         initialized_ = true;
+        step_count_ = 0;
 
-        ROS_INFO("[ESO] Observer reset & tracking at pos(%.2f, %.2f, %.2f)", position.x(), position.y(), position.z());
+        ROS_INFO("[ESO] Observer activated at pos(%.2f, %.2f, %.2f)", position.x(), position.y(), position.z());
     }
 
     void odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
     {
-        frame_count_++;
-        ros::Time now = ros::Time::now();
-
         Eigen::Vector3d position(
             msg->pose.pose.position.x,
             msg->pose.pose.position.y,
@@ -135,14 +134,13 @@ private:
         {
             initialized_ = false;
             publishZero(msg->header.stamp);
-            printStatus(now);
+            ROS_INFO_THROTTLE(2.0, "[ESO Observer] Inactive. Waiting for vehicle ARM & OFFBOARD (Mode: %d)", mpc_mode_);
             return;
         }
 
         if (!initialized_)
         {
             resetObserver(position, v_world, msg->header.stamp);
-            printStatus(now);
             return;
         }
 
@@ -152,9 +150,12 @@ private:
         if (dt <= 0.0 || dt > 0.1)
         {
             resetObserver(position, v_world, msg->header.stamp);
-            printStatus(now);
             return;
         }
+
+        // Calculate instantaneous update frequency
+        step_count_++;
+        current_rate_hz_ = 0.9 * current_rate_hz_ + 0.1 * (1.0 / dt);
 
         // Compute nominal collective thrust acceleration
         double hover = std::max(hover_thrust_, 0.1);
@@ -183,26 +184,16 @@ private:
         }
 
         publishEstimate(msg->header.stamp);
-        printStatus(now);
-    }
 
-    void printStatus(const ros::Time& now)
-    {
-        double print_elapsed = (now - last_print_time_).toSec();
-        if (print_elapsed >= 1.0)
+        // Print real-time ESO estimates and update rate at 1Hz
+        ros::Time now = ros::Time::now();
+        if ((now - last_print_time_).toSec() >= 1.0)
         {
-            double actual_hz = frame_count_ / print_elapsed;
-            frame_count_ = 0;
             last_print_time_ = now;
-
-            std::string mode_str = (!current_state_.armed || current_state_.mode != "OFFBOARD") ? "STANDBY"
-                                 : (mpc_mode_ == 0) ? "TAKEOFF"
-                                 : (mpc_mode_ == 1) ? "HOVER"
-                                 : (mpc_mode_ == 2) ? "TRACKING" : "WAIT";
-
             double d_norm = z3_.norm();
-            ROS_INFO("[ESO Observer] Rate: %5.1f Hz | Mode: %-8s | d_hat: [%+5.2f, %+5.2f, %+5.2f] m/s^2 (|d|=%.2f) | Est Vel: [%+4.2f, %+4.2f, %+4.2f] m/s",
-                     actual_hz, mode_str.c_str(), z3_.x(), z3_.y(), z3_.z(), d_norm, z2_.x(), z2_.y(), z2_.z());
+            std::string mode_str = (mpc_mode_ == 1) ? "HOVER" : "TRACKING";
+            ROS_INFO("[ESO Observer | %s] Rate: %5.1f Hz | Disturbance d_hat: [%+5.2f, %+5.2f, %+5.2f] m/s^2 (|d|=%.2f) | EstVel: [%+5.2f, %+5.2f, %+5.2f]",
+                     mode_str.c_str(), current_rate_hz_, z3_.x(), z3_.y(), z3_.z(), d_norm, z2_.x(), z2_.y(), z2_.z());
         }
     }
 
@@ -290,10 +281,9 @@ private:
 
     bool initialized_;
     ros::Time last_stamp_;
-
-    // Real-time frequency calculation
-    int frame_count_;
     ros::Time last_print_time_;
+    int step_count_;
+    double current_rate_hz_;
 };
 
 int main(int argc, char** argv)
