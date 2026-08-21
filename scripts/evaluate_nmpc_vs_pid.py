@@ -599,18 +599,12 @@ def main():
         print(f"[Error] No valid flight logs found or specified.")
         sys.exit(1)
 
-    # Automatically synchronize and crop to common overlapping time window
-    max_times = [df["time_sec"].max() for df in [df_eso, df_nmpc, df_pid] if df is not None]
-    if max_times:
-        t_max_common = min(max_times)
-        if t_max_common >= 15.0:
-            print(f"[Time Sync] Synchronizing comparison to common overlapping window: 10.0s ~ {t_max_common:.1f}s")
-            if df_eso is not None:
-                df_eso = df_eso[df_eso["time_sec"] <= t_max_common].copy()
-            if df_nmpc is not None:
-                df_nmpc = df_nmpc[df_nmpc["time_sec"] <= t_max_common].copy()
-            if df_pid is not None:
-                df_pid = df_pid[df_pid["time_sec"] <= t_max_common].copy()
+    # 各日志独立计算，不做相互裁剪，保证同一份 CSV 每次输出完全相同的指标
+    # 注意：各组飞行时长允许不一致，比较时需留意绝对数值的时间背景差异
+    t_eso_max = f"{df_eso['time_sec'].max():.1f}s" if df_eso is not None else "N/A"
+    t_nmpc_max = f"{df_nmpc['time_sec'].max():.1f}s" if df_nmpc is not None else "N/A"
+    t_pid_max = f"{df_pid['time_sec'].max():.1f}s" if df_pid is not None else "N/A"
+    print(f"[Duration] ESO={t_eso_max} | NMPC={t_nmpc_max} | PID={t_pid_max} (each evaluated over its own full log)")
 
     if df_eso is not None:
         m_eso = calculate_metrics(df_eso, "NMPC_ESO")
