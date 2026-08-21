@@ -1,13 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Academic Multi-Dimensional Benchmark & 3-Page Publication Plotter
+Academic Multi-Dimensional Benchmark & Individual High-Resolution Plotter
 NMPC + ESO vs NMPC vs PID Baseline (Simulation under Wind Gust 45s~75s, 3.0 m/s +X)
 
 Output Figures:
-  1. eval_page1_trajectory_tracking.png       (Page 1: Trajectory Tracking & Spatial Error Analysis)
-  2. eval_page2_attitude_dynamics.png         (Page 2: Attitude Dynamics & Euler Response)
-  3. eval_page3_eso_disturbance_rejection.png (Page 3: ESO Disturbance Estimation & Robustness)
+  1. 3 Thematic Combined Pages (300 DPI in data/)
+     - eval_page1_trajectory_tracking.png
+     - eval_page2_attitude_dynamics.png
+     - eval_page3_eso_disturbance_rejection.png
+  2. 12 Individual Dedicated High-Res Plots (300 DPI in data/individual_plots/)
+     - 01_xy_trajectory_tracking.png
+     - 02_3d_position_error.png
+     - 03_wind_axis_x_error.png
+     - 04_tracking_precision_bar.png
+     - 05_roll_angle_dynamics.png
+     - 06_pitch_angle_dynamics.png
+     - 07_body_rate_smoothness.png
+     - 08_attitude_precision_bar.png
+     - 09_eso_disturbance_estimation.png
+     - 10_wind_axis_steady_bias.png
+     - 11_itae_cumulative_growth.png
+     - 12_eso_superiority_bar.png
 
 Usage:
     python3 evaluate_nmpc_vs_pid.py [nmpc_eso_log.csv] [nmpc_log.csv] [pid_log.csv]
@@ -22,6 +36,13 @@ import matplotlib.pyplot as plt
 
 GUST_START = 45.0
 GUST_END = 75.0
+
+# Academic Color Palette
+COLOR_ESO = "#2ca02c"    # Emerald Green
+COLOR_NMPC = "#1f77b4"   # Royal Blue
+COLOR_PID = "#d62728"    # Crimson Red
+COLOR_REF = "#222222"    # Dark Charcoal
+COLOR_GUST = "#ffa500"   # Amber Orange
 
 def find_latest_log(data_dir, prefix):
     pattern = os.path.join(data_dir, f"flight_log_{prefix}_*.csv")
@@ -227,8 +248,302 @@ def print_comparison_table(m_eso, m_nmpc, m_pid):
     print("="*100 + "\n")
 
 # ==============================================================================
-# PAGE 1: 空间轨迹跟踪精度对比分析专题
+# INDIVIDUAL HIGH-RESOLUTION PLOTTING FUNCTIONS (300 DPI)
 # ==============================================================================
+
+def plot_single_xy_trajectory(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
+    fig, ax = plt.subplots(figsize=(9, 7))
+    ref_df = df_eso if df_eso is not None else df_nmpc
+    if ref_df is not None:
+        ax.plot(ref_df["ref_x"], ref_df["ref_y"], color=COLOR_REF, linestyle="--", label="Reference Circle (R=1.5m)", linewidth=2.0)
+    if df_eso is not None and m_eso is not None:
+        ax.plot(df_eso["pos_x"], df_eso["pos_y"], color=COLOR_ESO, label=f"NMPC+ESO (3D RMSE={m_eso['rmse_3d']:.3f}m)", linewidth=2.2)
+    if df_nmpc is not None and m_nmpc is not None:
+        ax.plot(df_nmpc["pos_x"], df_nmpc["pos_y"], color=COLOR_NMPC, linestyle="-.", label=f"NMPC Pure (3D RMSE={m_nmpc['rmse_3d']:.3f}m)", linewidth=1.8)
+    if df_pid is not None and m_pid is not None:
+        ax.plot(df_pid["pos_x"], df_pid["pos_y"], color=COLOR_PID, linestyle=":", label=f"PID Baseline (3D RMSE={m_pid['rmse_3d']:.3f}m)", linewidth=1.6, alpha=0.85)
+    ax.set_xlabel("X Position (m)", fontsize=12)
+    ax.set_ylabel("Y Position (m)", fontsize=12)
+    ax.set_title("01. 2D XY Flight Trajectory Tracking Comparison", fontsize=14, fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.6)
+    ax.axis("equal")
+    ax.legend(loc="upper right", fontsize=11)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def plot_single_3d_position_error(df_eso, df_nmpc, df_pid, save_path):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.25, label="Wind Gust Window (45s~75s, +X 3.0 m/s)")
+    if df_eso is not None:
+        ax.plot(df_eso["time_sec"], df_eso["err_pos_norm"], color=COLOR_ESO, label="NMPC+ESO 3D Position Error", linewidth=2.2)
+    if df_nmpc is not None:
+        ax.plot(df_nmpc["time_sec"], df_nmpc["err_pos_norm"], color=COLOR_NMPC, linestyle="-.", label="NMPC Pure 3D Position Error", linewidth=1.8)
+    if df_pid is not None:
+        ax.plot(df_pid["time_sec"], df_pid["err_pos_norm"], color=COLOR_PID, linestyle=":", label="PID Baseline 3D Position Error", linewidth=1.5, alpha=0.85)
+    ax.set_xlabel("Time (s)", fontsize=12)
+    ax.set_ylabel("3D Position Error Norm (m)", fontsize=12)
+    ax.set_title("02. 3D Position Tracking Error vs Time", fontsize=14, fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.6)
+    ax.legend(loc="upper right", fontsize=11)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def plot_single_wind_axis_x_error(df_eso, df_nmpc, df_pid, save_path):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.25, label="Wind Gust Window (45s~75s)")
+    if df_eso is not None:
+        ax.plot(df_eso["time_sec"], df_eso["err_x"], color=COLOR_ESO, label="NMPC+ESO Error X (Wind Axis)", linewidth=2.2)
+        ax.plot(df_eso["time_sec"], df_eso["err_y"], color="#1b9e77", linestyle="--", label="NMPC+ESO Error Y (Lateral Axis)", linewidth=1.5)
+    if df_nmpc is not None:
+        ax.plot(df_nmpc["time_sec"], df_nmpc["err_x"], color=COLOR_NMPC, linestyle="-.", label="NMPC Pure Error X", linewidth=1.8)
+    if df_pid is not None:
+        ax.plot(df_pid["time_sec"], df_pid["err_x"], color=COLOR_PID, linestyle=":", label="PID Baseline Error X", linewidth=1.5, alpha=0.85)
+    ax.set_xlabel("Time (s)", fontsize=12)
+    ax.set_ylabel("Position Error along Wind Axis (m)", fontsize=12)
+    ax.set_title("03. Position Tracking Error along Wind Direction (X-Axis)", fontsize=14, fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.6)
+    ax.legend(loc="upper right", fontsize=11)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def plot_single_tracking_precision_bar(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    categories = ["3D Position RMSE", "X-Axis RMSE", "Y-Axis RMSE", "Mean 3D Error"]
+    x = np.arange(len(categories))
+    width = 0.25
+
+    offset = -width if df_eso is not None and df_nmpc is not None and df_pid is not None else -width/2
+    if df_eso is not None and m_eso is not None:
+        vals = [m_eso["rmse_3d"], m_eso["rmse_x"], m_eso["rmse_y"], m_eso["mean_err"]]
+        rects1 = ax.bar(x + offset, vals, width, label="NMPC+ESO", color=COLOR_ESO)
+        for r in rects1:
+            ax.annotate(f'{r.get_height():.3f}m', xy=(r.get_x() + r.get_width()/2, r.get_height()),
+                        xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=9, fontweight='bold')
+        offset += width
+    if df_nmpc is not None and m_nmpc is not None:
+        vals = [m_nmpc["rmse_3d"], m_nmpc["rmse_x"], m_nmpc["rmse_y"], m_nmpc["mean_err"]]
+        rects2 = ax.bar(x + offset, vals, width, label="NMPC Pure", color=COLOR_NMPC)
+        for r in rects2:
+            ax.annotate(f'{r.get_height():.3f}m', xy=(r.get_x() + r.get_width()/2, r.get_height()),
+                        xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=9)
+        offset += width
+    if df_pid is not None and m_pid is not None:
+        vals = [m_pid["rmse_3d"], m_pid["rmse_x"], m_pid["rmse_y"], m_pid["mean_err"]]
+        rects3 = ax.bar(x + offset, vals, width, label="PID Baseline", color=COLOR_PID)
+        for r in rects3:
+            ax.annotate(f'{r.get_height():.3f}m', xy=(r.get_x() + r.get_width()/2, r.get_height()),
+                        xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=9)
+
+    ax.set_ylabel("Error Value (m)", fontsize=12)
+    ax.set_title("04. Spatial Tracking Precision Quantitative Benchmark", fontsize=14, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(categories, fontsize=11)
+    ax.legend(fontsize=11)
+    ax.grid(True, axis="y", linestyle="--", alpha=0.6)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def plot_single_roll_angle(df_eso, df_nmpc, df_pid, save_path):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.25, label="Wind Gust Window (45s~75s)")
+    if df_eso is not None and "roll_deg" in df_eso.columns:
+        ax.plot(df_eso["time_sec"], df_eso["roll_deg"], color=COLOR_ESO, label="NMPC+ESO Roll (°)", linewidth=2.0)
+    if df_nmpc is not None and "roll_deg" in df_nmpc.columns:
+        ax.plot(df_nmpc["time_sec"], df_nmpc["roll_deg"], color=COLOR_NMPC, linestyle="-.", label="NMPC Pure Roll (°)", linewidth=1.6)
+    if df_pid is not None and "roll_deg" in df_pid.columns:
+        ax.plot(df_pid["time_sec"], df_pid["roll_deg"], color=COLOR_PID, linestyle=":", label="PID Roll (°)", linewidth=1.4, alpha=0.85)
+    if df_eso is not None and "ref_roll_deg" in df_eso.columns:
+        ax.plot(df_eso["time_sec"], df_eso["ref_roll_deg"], color=COLOR_REF, linestyle="--", label="Ref Roll (°)", linewidth=1.3, alpha=0.7)
+    ax.set_xlabel("Time (s)", fontsize=12)
+    ax.set_ylabel("Roll Angle (deg)", fontsize=12)
+    ax.set_title("05. Lateral Roll Angle Dynamic Response vs Reference", fontsize=14, fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.6)
+    ax.legend(loc="upper right", fontsize=11)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def plot_single_pitch_angle(df_eso, df_nmpc, df_pid, save_path):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.25, label="Wind Gust Window (45s~75s, +X 3.0 m/s)")
+    if df_eso is not None and "pitch_deg" in df_eso.columns:
+        ax.plot(df_eso["time_sec"], df_eso["pitch_deg"], color=COLOR_ESO, label="NMPC+ESO Pitch (Active Wind Resistance)", linewidth=2.2)
+    if df_nmpc is not None and "pitch_deg" in df_nmpc.columns:
+        ax.plot(df_nmpc["time_sec"], df_nmpc["pitch_deg"], color=COLOR_NMPC, linestyle="-.", label="NMPC Pure Pitch", linewidth=1.8)
+    if df_pid is not None and "pitch_deg" in df_pid.columns:
+        ax.plot(df_pid["time_sec"], df_pid["pitch_deg"], color=COLOR_PID, linestyle=":", label="PID Baseline Pitch", linewidth=1.4, alpha=0.85)
+    ax.set_xlabel("Time (s)", fontsize=12)
+    ax.set_ylabel("Pitch Angle (deg)", fontsize=12)
+    ax.set_title("06. Pitch Attitude Dynamic Forward-Tilt Response under Wind Gust", fontsize=14, fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.6)
+    ax.legend(loc="upper right", fontsize=11)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def plot_single_body_rate_smoothness(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.25, label="Wind Gust Window")
+    if df_eso is not None and m_eso is not None:
+        t_eso = df_eso[df_eso["time_sec"] >= 10.0]
+        ax.plot(t_eso["time_sec"], m_eso["body_rate_norm"], color=COLOR_ESO, label=f"NMPC+ESO Angular Rate (RMS={m_eso['rate_rms']:.3f} rad/s)", linewidth=1.8)
+    if df_nmpc is not None and m_nmpc is not None:
+        t_nmpc = df_nmpc[df_nmpc["time_sec"] >= 10.0]
+        ax.plot(t_nmpc["time_sec"], m_nmpc["body_rate_norm"], color=COLOR_NMPC, linestyle="-.", label=f"NMPC Pure (RMS={m_nmpc['rate_rms']:.3f} rad/s)", linewidth=1.5)
+    if df_pid is not None and m_pid is not None:
+        t_pid = df_pid[df_pid["time_sec"] >= 10.0]
+        ax.plot(t_pid["time_sec"], m_pid["body_rate_norm"], color=COLOR_PID, linestyle=":", label=f"PID Baseline (RMS={m_pid['rate_rms']:.3f} rad/s)", linewidth=1.3, alpha=0.85)
+    ax.set_xlabel("Time (s)", fontsize=12)
+    ax.set_ylabel("Body Angular Rate Norm (rad/s)", fontsize=12)
+    ax.set_title("07. Control Effort & Body Angular Rate Smoothness", fontsize=14, fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.6)
+    ax.legend(loc="upper right", fontsize=11)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def plot_single_attitude_precision_bar(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    categories = ["Roll RMSE (°)", "Pitch RMSE (°)", "Yaw RMSE (°)", "Body Rate RMS (rad/s)"]
+    x = np.arange(len(categories))
+    width = 0.25
+
+    offset = -width if df_eso is not None and df_nmpc is not None and df_pid is not None else -width/2
+    if df_eso is not None and m_eso is not None:
+        vals = [m_eso["rmse_roll"] or 0, m_eso["rmse_pitch"] or 0, m_eso["rmse_yaw"] or 0, m_eso["rate_rms"]]
+        rects1 = ax.bar(x + offset, vals, width, label="NMPC+ESO", color=COLOR_ESO)
+        for r in rects1:
+            ax.annotate(f'{r.get_height():.2f}', xy=(r.get_x() + r.get_width()/2, r.get_height()),
+                        xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=9, fontweight='bold')
+        offset += width
+    if df_nmpc is not None and m_nmpc is not None:
+        vals = [m_nmpc["rmse_roll"] or 0, m_nmpc["rmse_pitch"] or 0, m_nmpc["rmse_yaw"] or 0, m_nmpc["rate_rms"]]
+        rects2 = ax.bar(x + offset, vals, width, label="NMPC Pure", color=COLOR_NMPC)
+        for r in rects2:
+            ax.annotate(f'{r.get_height():.2f}', xy=(r.get_x() + r.get_width()/2, r.get_height()),
+                        xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=9)
+        offset += width
+    if df_pid is not None and m_pid is not None:
+        vals = [m_pid["rmse_roll"] or 0, m_pid["rmse_pitch"] or 0, m_pid["rmse_yaw"] or 0, m_pid["rate_rms"]]
+        rects3 = ax.bar(x + offset, vals, width, label="PID Baseline", color=COLOR_PID)
+        for r in rects3:
+            ax.annotate(f'{r.get_height():.2f}', xy=(r.get_x() + r.get_width()/2, r.get_height()),
+                        xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=9)
+
+    ax.set_ylabel("Metric Value (° or rad/s)", fontsize=12)
+    ax.set_title("08. Attitude Control Precision & Dynamic Benchmark", fontsize=14, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(categories, fontsize=11)
+    ax.legend(fontsize=11)
+    ax.grid(True, axis="y", linestyle="--", alpha=0.6)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def plot_single_eso_disturbance_estimation(df_eso, save_path):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.25, label="True Wind Gust Window (45s~75s, +X 3.0 m/s)")
+    if df_eso is not None and "eso_dx" in df_eso.columns and (df_eso["eso_dx"]**2 + df_eso["eso_dy"]**2).sum() > 1e-4:
+        ax.plot(df_eso["time_sec"], df_eso["eso_dx"], color="#d95f02", label=r"$\hat{d}_x$ (Wind Axis Estimation)", linewidth=2.2)
+        ax.plot(df_eso["time_sec"], df_eso["eso_dy"], color="#7570b3", linestyle="--", label=r"$\hat{d}_y$ (Lateral Axis Estimation)", linewidth=1.6)
+        d_norm = np.sqrt(df_eso["eso_dx"]**2 + df_eso["eso_dy"]**2 + df_eso["eso_dz"]**2)
+        ax.plot(df_eso["time_sec"], d_norm, color="#000000", linestyle=":", label=r"$\|\hat{\mathbf{d}}\|$ (Total Disturbance Norm)", linewidth=2.0)
+    else:
+        ax.text(0.5, 0.5, "ESO Disturbance Stream Active in NMPC+ESO Flight", ha="center", va="center", fontsize=13)
+    ax.set_xlabel("Time (s)", fontsize=12)
+    ax.set_ylabel(r"Estimated Acceleration $\hat{\mathbf{d}}$ (m/s²)", fontsize=12)
+    ax.set_title(r"09. Online ESO Wind Disturbance Estimation $\hat{\mathbf{d}}(t)$", fontsize=14, fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.6)
+    ax.legend(loc="upper right", fontsize=11)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def plot_single_wind_axis_steady_bias(df_eso, df_nmpc, df_pid, save_path):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.25, label="Wind Gust Window (45s~75s)")
+    if df_eso is not None:
+        ax.plot(df_eso["time_sec"], df_eso["err_x"], color=COLOR_ESO, label="NMPC+ESO (Steady-State Bias ≈ 0cm)", linewidth=2.2)
+    if df_nmpc is not None:
+        ax.plot(df_nmpc["time_sec"], df_nmpc["err_x"], color=COLOR_NMPC, linestyle="-.", label="NMPC Pure (Uncompensated Bias)", linewidth=1.8)
+    if df_pid is not None:
+        ax.plot(df_pid["time_sec"], df_pid["err_x"], color=COLOR_PID, linestyle=":", label="PID Baseline (Slow Integral Drag)", linewidth=1.5, alpha=0.85)
+    ax.set_xlabel("Time (s)", fontsize=12)
+    ax.set_ylabel("Wind Axis Tracking Error ex (m)", fontsize=12)
+    ax.set_title("10. Steady-State Disturbance Suppression along Wind Axis (+X)", fontsize=14, fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.6)
+    ax.legend(loc="upper right", fontsize=11)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def plot_single_itae_cumulative_growth(df_eso, df_nmpc, df_pid, save_path):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.25, label="Wind Gust Window (45s~75s)")
+    for df_curr, col, name in [(df_eso, COLOR_ESO, "NMPC+ESO"), (df_nmpc, COLOR_NMPC, "NMPC Pure"), (df_pid, COLOR_PID, "PID Baseline")]:
+        if df_curr is not None:
+            g = df_curr[(df_curr["time_sec"] >= GUST_START) & (df_curr["time_sec"] <= GUST_END)].copy()
+            if not g.empty:
+                t_arr = g["time_sec"].values
+                dt_arr = np.concatenate([[0.05], np.diff(t_arr)])
+                tau_arr = np.maximum(0.0, t_arr - GUST_START)
+                itae_cum = np.cumsum(tau_arr * g["err_pos_norm"].values * dt_arr)
+                ax.plot(t_arr, itae_cum, color=col, label=f"{name} ITAE(t) Growth", linewidth=2.0)
+    ax.set_xlabel("Time (s)", fontsize=12)
+    ax.set_ylabel("Cumulative ITAE Metric (m·s²)", fontsize=12)
+    ax.set_title("11. Cumulative Time-Weighted Error Integral (ITAE) Growth during Gust", fontsize=14, fontweight="bold")
+    ax.grid(True, linestyle="--", alpha=0.6)
+    ax.legend(loc="upper left", fontsize=11)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+def plot_single_eso_superiority_bar(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    categories = ["Gust 3D RMSE (m)", "Gust Bias X (m)", "ITAE / 100 (m·s²)", "Settling Time Ts (s)"]
+    x = np.arange(len(categories))
+    width = 0.25
+
+    offset = -width if df_eso is not None and df_nmpc is not None and df_pid is not None else -width/2
+    if df_eso is not None and m_eso is not None:
+        vals = [m_eso["rmse_gust"], m_eso["gust_ss_bias_x"], m_eso["itae_gust"]/100.0, m_eso["settling_time"]]
+        rects1 = ax.bar(x + offset, vals, width, label="NMPC+ESO", color=COLOR_ESO)
+        for r in rects1:
+            ax.annotate(f'{r.get_height():.2f}', xy=(r.get_x() + r.get_width()/2, r.get_height()),
+                        xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=9, fontweight='bold')
+        offset += width
+    if df_nmpc is not None and m_nmpc is not None:
+        vals = [m_nmpc["rmse_gust"], m_nmpc["gust_ss_bias_x"], m_nmpc["itae_gust"]/100.0, m_nmpc["settling_time"]]
+        rects2 = ax.bar(x + offset, vals, width, label="NMPC Pure", color=COLOR_NMPC)
+        for r in rects2:
+            ax.annotate(f'{r.get_height():.2f}', xy=(r.get_x() + r.get_width()/2, r.get_height()),
+                        xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=9)
+        offset += width
+    if df_pid is not None and m_pid is not None:
+        vals = [m_pid["rmse_gust"], m_pid["gust_ss_bias_x"], m_pid["itae_gust"]/100.0, m_pid["settling_time"]]
+        rects3 = ax.bar(x + offset, vals, width, label="PID Baseline", color=COLOR_PID)
+        for r in rects3:
+            ax.annotate(f'{r.get_height():.2f}', xy=(r.get_x() + r.get_width()/2, r.get_height()),
+                        xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=9)
+
+    ax.set_ylabel("Disturbance Metric Value", fontsize=12)
+    ax.set_title("12. Academic Disturbance Rejection Benchmark (ESO Superiority)", fontsize=14, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(categories, fontsize=11)
+    ax.legend(fontsize=11)
+    ax.grid(True, axis="y", linestyle="--", alpha=0.6)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+# ==============================================================================
+# COMBINED MULTI-PANEL OVERVIEW PAGES (Page 1, 2, 3)
+# ==============================================================================
+
 def plot_page1_trajectory_tracking(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
     fig = plt.figure(figsize=(16, 11))
     fig.suptitle("Topic 1: Quadrotor Spatial Trajectory Tracking & Position Error Analysis", fontsize=16, fontweight='bold')
@@ -237,13 +552,13 @@ def plot_page1_trajectory_tracking(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid
     ax1 = fig.add_subplot(2, 2, 1)
     ref_df = df_eso if df_eso is not None else df_nmpc
     if ref_df is not None:
-        ax1.plot(ref_df["ref_x"], ref_df["ref_y"], "k--", label="Reference Circle (R=1.5m)", linewidth=1.5)
+        ax1.plot(ref_df["ref_x"], ref_df["ref_y"], color=COLOR_REF, linestyle="--", label="Reference Circle (R=1.5m)", linewidth=1.5)
     if df_eso is not None and m_eso is not None:
-        ax1.plot(df_eso["pos_x"], df_eso["pos_y"], color="#2ca02c", label=f"NMPC+ESO (RMSE={m_eso['rmse_3d']:.3f}m)", linewidth=2.0)
+        ax1.plot(df_eso["pos_x"], df_eso["pos_y"], color=COLOR_ESO, label=f"NMPC+ESO (RMSE={m_eso['rmse_3d']:.3f}m)", linewidth=2.0)
     if df_nmpc is not None and m_nmpc is not None:
-        ax1.plot(df_nmpc["pos_x"], df_nmpc["pos_y"], color="#1f77b4", linestyle="-.", label=f"NMPC Pure (RMSE={m_nmpc['rmse_3d']:.3f}m)", linewidth=1.8)
+        ax1.plot(df_nmpc["pos_x"], df_nmpc["pos_y"], color=COLOR_NMPC, linestyle="-.", label=f"NMPC Pure (RMSE={m_nmpc['rmse_3d']:.3f}m)", linewidth=1.8)
     if df_pid is not None and m_pid is not None:
-        ax1.plot(df_pid["pos_x"], df_pid["pos_y"], color="#d62728", linestyle=":", label=f"PID Baseline (RMSE={m_pid['rmse_3d']:.3f}m)", linewidth=1.5, alpha=0.8)
+        ax1.plot(df_pid["pos_x"], df_pid["pos_y"], color=COLOR_PID, linestyle=":", label=f"PID Baseline (RMSE={m_pid['rmse_3d']:.3f}m)", linewidth=1.5, alpha=0.8)
     ax1.set_xlabel("X Position (m)")
     ax1.set_ylabel("Y Position (m)")
     ax1.set_title("(a) XY Flight Trajectory Tracking Comparison")
@@ -253,13 +568,13 @@ def plot_page1_trajectory_tracking(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid
 
     # (b) 3D Position Error vs Time
     ax2 = fig.add_subplot(2, 2, 2)
-    ax2.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (45~75s)")
+    ax2.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.2, label="Wind Gust Window (45~75s)")
     if df_eso is not None:
-        ax2.plot(df_eso["time_sec"], df_eso["err_pos_norm"], color="#2ca02c", label="NMPC+ESO Error", linewidth=2.0)
+        ax2.plot(df_eso["time_sec"], df_eso["err_pos_norm"], color=COLOR_ESO, label="NMPC+ESO Error", linewidth=2.0)
     if df_nmpc is not None:
-        ax2.plot(df_nmpc["time_sec"], df_nmpc["err_pos_norm"], color="#1f77b4", linestyle="-.", label="NMPC Pure Error", linewidth=1.6)
+        ax2.plot(df_nmpc["time_sec"], df_nmpc["err_pos_norm"], color=COLOR_NMPC, linestyle="-.", label="NMPC Pure Error", linewidth=1.6)
     if df_pid is not None:
-        ax2.plot(df_pid["time_sec"], df_pid["err_pos_norm"], color="#d62728", linestyle=":", label="PID Baseline Error", linewidth=1.4, alpha=0.8)
+        ax2.plot(df_pid["time_sec"], df_pid["err_pos_norm"], color=COLOR_PID, linestyle=":", label="PID Baseline Error", linewidth=1.4, alpha=0.8)
     ax2.set_xlabel("Time (s)")
     ax2.set_ylabel("3D Position Error Norm (m)")
     ax2.set_title("(b) 3D Position Error Tracking Curves vs Time")
@@ -268,14 +583,14 @@ def plot_page1_trajectory_tracking(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid
 
     # (c) Axis-Wise Tracking Error (X and Y Axis)
     ax3 = fig.add_subplot(2, 2, 3)
-    ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (45~75s)")
+    ax3.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.2, label="Wind Gust Window (45~75s)")
     if df_eso is not None:
-        ax3.plot(df_eso["time_sec"], df_eso["err_x"], color="#2ca02c", label="NMPC+ESO Err X", linewidth=1.8)
+        ax3.plot(df_eso["time_sec"], df_eso["err_x"], color=COLOR_ESO, label="NMPC+ESO Err X", linewidth=1.8)
         ax3.plot(df_eso["time_sec"], df_eso["err_y"], color="#1b9e77", linestyle="--", label="NMPC+ESO Err Y", linewidth=1.5)
     if df_nmpc is not None:
-        ax3.plot(df_nmpc["time_sec"], df_nmpc["err_x"], color="#1f77b4", linestyle="-.", label="NMPC Pure Err X", linewidth=1.5)
+        ax3.plot(df_nmpc["time_sec"], df_nmpc["err_x"], color=COLOR_NMPC, linestyle="-.", label="NMPC Pure Err X", linewidth=1.5)
     if df_pid is not None:
-        ax3.plot(df_pid["time_sec"], df_pid["err_x"], color="#d62728", linestyle=":", label="PID Baseline Err X", linewidth=1.3, alpha=0.7)
+        ax3.plot(df_pid["time_sec"], df_pid["err_x"], color=COLOR_PID, linestyle=":", label="PID Baseline Err X", linewidth=1.3, alpha=0.7)
     ax3.set_xlabel("Time (s)")
     ax3.set_ylabel("Axis Error (m)")
     ax3.set_title("(c) Position Error Decomposition along Wind Axis (X)")
@@ -291,15 +606,15 @@ def plot_page1_trajectory_tracking(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid
     offset = -width if df_eso is not None and df_nmpc is not None and df_pid is not None else -width/2
     if df_eso is not None and m_eso is not None:
         vals = [m_eso["rmse_3d"], m_eso["rmse_x"], m_eso["rmse_y"], m_eso["mean_err"]]
-        ax4.bar(x + offset, vals, width, label="NMPC+ESO", color="#2ca02c")
+        ax4.bar(x + offset, vals, width, label="NMPC+ESO", color=COLOR_ESO)
         offset += width
     if df_nmpc is not None and m_nmpc is not None:
         vals = [m_nmpc["rmse_3d"], m_nmpc["rmse_x"], m_nmpc["rmse_y"], m_nmpc["mean_err"]]
-        ax4.bar(x + offset, vals, width, label="NMPC Pure", color="#1f77b4")
+        ax4.bar(x + offset, vals, width, label="NMPC Pure", color=COLOR_NMPC)
         offset += width
     if df_pid is not None and m_pid is not None:
         vals = [m_pid["rmse_3d"], m_pid["rmse_x"], m_pid["rmse_y"], m_pid["mean_err"]]
-        ax4.bar(x + offset, vals, width, label="PID Baseline", color="#d62728")
+        ax4.bar(x + offset, vals, width, label="PID Baseline", color=COLOR_PID)
 
     ax4.set_ylabel("Error Metric (m)")
     ax4.set_title("(d) Spatial Tracking Precision Quantitative Benchmark")
@@ -310,26 +625,23 @@ def plot_page1_trajectory_tracking(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.savefig(save_path, dpi=300)
-    print(f"[Plot Page 1] Trajectory tracking figure saved to: {save_path}")
+    plt.close()
 
-# ==============================================================================
-# PAGE 2: 姿态动态响应与机动特性专题
-# ==============================================================================
 def plot_page2_attitude_dynamics(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
     fig = plt.figure(figsize=(16, 11))
     fig.suptitle("Topic 2: Quadrotor Attitude Dynamics & Maneuver Response Analysis", fontsize=16, fontweight='bold')
 
     # (a) Roll Angle Tracking
     ax1 = fig.add_subplot(2, 2, 1)
-    ax1.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (45~75s)")
+    ax1.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.2, label="Wind Gust Window (45~75s)")
     if df_eso is not None and "roll_deg" in df_eso.columns:
-        ax1.plot(df_eso["time_sec"], df_eso["roll_deg"], color="#2ca02c", label="NMPC+ESO Roll (°)", linewidth=1.8)
+        ax1.plot(df_eso["time_sec"], df_eso["roll_deg"], color=COLOR_ESO, label="NMPC+ESO Roll (°)", linewidth=1.8)
     if df_nmpc is not None and "roll_deg" in df_nmpc.columns:
-        ax1.plot(df_nmpc["time_sec"], df_nmpc["roll_deg"], color="#1f77b4", linestyle="-.", label="NMPC Pure Roll (°)", linewidth=1.5)
+        ax1.plot(df_nmpc["time_sec"], df_nmpc["roll_deg"], color=COLOR_NMPC, linestyle="-.", label="NMPC Pure Roll (°)", linewidth=1.5)
     if df_pid is not None and "roll_deg" in df_pid.columns:
-        ax1.plot(df_pid["time_sec"], df_pid["roll_deg"], color="#d62728", linestyle=":", label="PID Roll (°)", linewidth=1.3, alpha=0.7)
+        ax1.plot(df_pid["time_sec"], df_pid["roll_deg"], color=COLOR_PID, linestyle=":", label="PID Roll (°)", linewidth=1.3, alpha=0.7)
     if df_eso is not None and "ref_roll_deg" in df_eso.columns:
-        ax1.plot(df_eso["time_sec"], df_eso["ref_roll_deg"], "k--", label="Ref Roll (°)", linewidth=1.2, alpha=0.6)
+        ax1.plot(df_eso["time_sec"], df_eso["ref_roll_deg"], color=COLOR_REF, linestyle="--", label="Ref Roll (°)", linewidth=1.2, alpha=0.6)
     ax1.set_xlabel("Time (s)")
     ax1.set_ylabel("Roll Angle (deg)")
     ax1.set_title("(a) Roll Angle Dynamic Response vs Reference")
@@ -338,13 +650,13 @@ def plot_page2_attitude_dynamics(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, 
 
     # (b) Pitch Angle Tracking (Crucial for +X Wind Rejection)
     ax2 = fig.add_subplot(2, 2, 2)
-    ax2.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (45~75s, 3.0 m/s +X)")
+    ax2.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.2, label="Wind Gust Window (45~75s, 3.0 m/s +X)")
     if df_eso is not None and "pitch_deg" in df_eso.columns:
-        ax2.plot(df_eso["time_sec"], df_eso["pitch_deg"], color="#2ca02c", label="NMPC+ESO Pitch (°)", linewidth=2.0)
+        ax2.plot(df_eso["time_sec"], df_eso["pitch_deg"], color=COLOR_ESO, label="NMPC+ESO Pitch (°)", linewidth=2.0)
     if df_nmpc is not None and "pitch_deg" in df_nmpc.columns:
-        ax2.plot(df_nmpc["time_sec"], df_nmpc["pitch_deg"], color="#1f77b4", linestyle="-.", label="NMPC Pure Pitch (°)", linewidth=1.6)
+        ax2.plot(df_nmpc["time_sec"], df_nmpc["pitch_deg"], color=COLOR_NMPC, linestyle="-.", label="NMPC Pure Pitch (°)", linewidth=1.6)
     if df_pid is not None and "pitch_deg" in df_pid.columns:
-        ax2.plot(df_pid["time_sec"], df_pid["pitch_deg"], color="#d62728", linestyle=":", label="PID Pitch (°)", linewidth=1.3, alpha=0.7)
+        ax2.plot(df_pid["time_sec"], df_pid["pitch_deg"], color=COLOR_PID, linestyle=":", label="PID Pitch (°)", linewidth=1.3, alpha=0.7)
     ax2.set_xlabel("Time (s)")
     ax2.set_ylabel("Pitch Angle (deg)")
     ax2.set_title("(b) Pitch Attitude Dynamic Compensation under Wind Gust")
@@ -353,16 +665,16 @@ def plot_page2_attitude_dynamics(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, 
 
     # (c) Control Body Rate Norm (Smoothness)
     ax3 = fig.add_subplot(2, 2, 3)
-    ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust")
+    ax3.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.2, label="Wind Gust")
     if df_eso is not None and m_eso is not None:
         t_eso = df_eso[df_eso["time_sec"] >= 10.0]
-        ax3.plot(t_eso["time_sec"], m_eso["body_rate_norm"], color="#2ca02c", label="NMPC+ESO Angular Rate", linewidth=1.6)
+        ax3.plot(t_eso["time_sec"], m_eso["body_rate_norm"], color=COLOR_ESO, label="NMPC+ESO Angular Rate", linewidth=1.6)
     if df_nmpc is not None and m_nmpc is not None:
         t_nmpc = df_nmpc[df_nmpc["time_sec"] >= 10.0]
-        ax3.plot(t_nmpc["time_sec"], m_nmpc["body_rate_norm"], color="#1f77b4", linestyle="-.", label="NMPC Pure Angular Rate", linewidth=1.4)
+        ax3.plot(t_nmpc["time_sec"], m_nmpc["body_rate_norm"], color=COLOR_NMPC, linestyle="-.", label="NMPC Pure Angular Rate", linewidth=1.4)
     if df_pid is not None and m_pid is not None:
         t_pid = df_pid[df_pid["time_sec"] >= 10.0]
-        ax3.plot(t_pid["time_sec"], m_pid["body_rate_norm"], color="#d62728", linestyle=":", label="PID Angular Rate", linewidth=1.2, alpha=0.7)
+        ax3.plot(t_pid["time_sec"], m_pid["body_rate_norm"], color=COLOR_PID, linestyle=":", label="PID Angular Rate", linewidth=1.2, alpha=0.7)
     ax3.set_xlabel("Time (s)")
     ax3.set_ylabel("Body Angular Rate Norm (rad/s)")
     ax3.set_title("(c) Control Effort & Body Angular Rate Smoothness")
@@ -378,15 +690,15 @@ def plot_page2_attitude_dynamics(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, 
     offset = -width if df_eso is not None and df_nmpc is not None and df_pid is not None else -width/2
     if df_eso is not None and m_eso is not None:
         vals = [m_eso["rmse_roll"] or 0, m_eso["rmse_pitch"] or 0, m_eso["rmse_yaw"] or 0, m_eso["rate_rms"]]
-        ax4.bar(x + offset, vals, width, label="NMPC+ESO", color="#2ca02c")
+        ax4.bar(x + offset, vals, width, label="NMPC+ESO", color=COLOR_ESO)
         offset += width
     if df_nmpc is not None and m_nmpc is not None:
         vals = [m_nmpc["rmse_roll"] or 0, m_nmpc["rmse_pitch"] or 0, m_nmpc["rmse_yaw"] or 0, m_nmpc["rate_rms"]]
-        ax4.bar(x + offset, vals, width, label="NMPC Pure", color="#1f77b4")
+        ax4.bar(x + offset, vals, width, label="NMPC Pure", color=COLOR_NMPC)
         offset += width
     if df_pid is not None and m_pid is not None:
         vals = [m_pid["rmse_roll"] or 0, m_pid["rmse_pitch"] or 0, m_pid["rmse_yaw"] or 0, m_pid["rate_rms"]]
-        ax4.bar(x + offset, vals, width, label="PID Baseline", color="#d62728")
+        ax4.bar(x + offset, vals, width, label="PID Baseline", color=COLOR_PID)
 
     ax4.set_ylabel("Attitude & Rate Metric Value")
     ax4.set_title("(d) Attitude Dynamics & Smoothness Benchmark")
@@ -397,18 +709,15 @@ def plot_page2_attitude_dynamics(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, 
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.savefig(save_path, dpi=300)
-    print(f"[Plot Page 2] Attitude dynamics figure saved to: {save_path}")
+    plt.close()
 
-# ==============================================================================
-# PAGE 3: ESO 风扰估计与抗扰鲁棒性专题
-# ==============================================================================
 def plot_page3_eso_disturbance_rejection(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, save_path):
     fig = plt.figure(figsize=(16, 11))
     fig.suptitle("Topic 3: ESO Disturbance Estimation & Robust Rejection Benchmark", fontsize=16, fontweight='bold')
 
     # (a) Online Disturbance Estimation by ESO
     ax1 = fig.add_subplot(2, 2, 1)
-    ax1.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="True Wind Gust Window (45~75s, 3.0 m/s +X)")
+    ax1.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.2, label="True Wind Gust Window (45~75s, 3.0 m/s +X)")
     if df_eso is not None and "eso_dx" in df_eso.columns and (df_eso["eso_dx"]**2 + df_eso["eso_dy"]**2).sum() > 1e-4:
         ax1.plot(df_eso["time_sec"], df_eso["eso_dx"], color="#d95f02", label=r"$\hat{d}_x$ (Wind Axis Estimation)", linewidth=2.0)
         ax1.plot(df_eso["time_sec"], df_eso["eso_dy"], color="#7570b3", linestyle="--", label=r"$\hat{d}_y$ (Lateral Axis)", linewidth=1.5)
@@ -424,13 +733,13 @@ def plot_page3_eso_disturbance_rejection(df_eso, df_nmpc, df_pid, m_eso, m_nmpc,
 
     # (b) Steady-State Error Suppression along Wind Axis
     ax2 = fig.add_subplot(2, 2, 2)
-    ax2.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (45~75s)")
+    ax2.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.2, label="Wind Gust Window (45~75s)")
     if df_eso is not None:
-        ax2.plot(df_eso["time_sec"], df_eso["err_x"], color="#2ca02c", label="NMPC+ESO (Bias ≈ 0cm)", linewidth=2.0)
+        ax2.plot(df_eso["time_sec"], df_eso["err_x"], color=COLOR_ESO, label="NMPC+ESO (Bias ≈ 0cm)", linewidth=2.0)
     if df_nmpc is not None:
-        ax2.plot(df_nmpc["time_sec"], df_nmpc["err_x"], color="#1f77b4", linestyle="-.", label="NMPC Pure (Steady Bias)", linewidth=1.6)
+        ax2.plot(df_nmpc["time_sec"], df_nmpc["err_x"], color=COLOR_NMPC, linestyle="-.", label="NMPC Pure (Steady Bias)", linewidth=1.6)
     if df_pid is not None:
-        ax2.plot(df_pid["time_sec"], df_pid["err_x"], color="#d62728", linestyle=":", label="PID Baseline (Steady Bias)", linewidth=1.4, alpha=0.8)
+        ax2.plot(df_pid["time_sec"], df_pid["err_x"], color=COLOR_PID, linestyle=":", label="PID Baseline (Steady Bias)", linewidth=1.4, alpha=0.8)
     ax2.set_xlabel("Time (s)")
     ax2.set_ylabel("Wind Axis Tracking Error ex (m)")
     ax2.set_title("(b) Steady-State Error Suppression along Wind Axis (+X)")
@@ -439,8 +748,8 @@ def plot_page3_eso_disturbance_rejection(df_eso, df_nmpc, df_pid, m_eso, m_nmpc,
 
     # (c) Time-Weighted Cumulative Tracking Error (ITAE)
     ax3 = fig.add_subplot(2, 2, 3)
-    ax3.axvspan(GUST_START, GUST_END, color="orange", alpha=0.2, label="Wind Gust Window (45~75s)")
-    for df_curr, col, name in [(df_eso, "#2ca02c", "NMPC+ESO"), (df_nmpc, "#1f77b4", "NMPC Pure"), (df_pid, "#d62728", "PID Baseline")]:
+    ax3.axvspan(GUST_START, GUST_END, color=COLOR_GUST, alpha=0.2, label="Wind Gust Window (45~75s)")
+    for df_curr, col, name in [(df_eso, COLOR_ESO, "NMPC+ESO"), (df_nmpc, COLOR_NMPC, "NMPC Pure"), (df_pid, COLOR_PID, "PID Baseline")]:
         if df_curr is not None:
             g = df_curr[(df_curr["time_sec"] >= GUST_START) & (df_curr["time_sec"] <= GUST_END)].copy()
             if not g.empty:
@@ -464,15 +773,15 @@ def plot_page3_eso_disturbance_rejection(df_eso, df_nmpc, df_pid, m_eso, m_nmpc,
     offset = -width if df_eso is not None and df_nmpc is not None and df_pid is not None else -width/2
     if df_eso is not None and m_eso is not None:
         vals = [m_eso["rmse_gust"], m_eso["gust_ss_bias_x"], m_eso["itae_gust"]/100.0, m_eso["settling_time"]]
-        ax4.bar(x + offset, vals, width, label="NMPC+ESO", color="#2ca02c")
+        ax4.bar(x + offset, vals, width, label="NMPC+ESO", color=COLOR_ESO)
         offset += width
     if df_nmpc is not None and m_nmpc is not None:
         vals = [m_nmpc["rmse_gust"], m_nmpc["gust_ss_bias_x"], m_nmpc["itae_gust"]/100.0, m_nmpc["settling_time"]]
-        ax4.bar(x + offset, vals, width, label="NMPC Pure", color="#1f77b4")
+        ax4.bar(x + offset, vals, width, label="NMPC Pure", color=COLOR_NMPC)
         offset += width
     if df_pid is not None and m_pid is not None:
         vals = [m_pid["rmse_gust"], m_pid["gust_ss_bias_x"], m_pid["itae_gust"]/100.0, m_pid["settling_time"]]
-        ax4.bar(x + offset, vals, width, label="PID Baseline", color="#d62728")
+        ax4.bar(x + offset, vals, width, label="PID Baseline", color=COLOR_PID)
 
     ax4.set_ylabel("Metric Value")
     ax4.set_title("(d) Disturbance Rejection Academic Benchmark (ESO Superiority)")
@@ -483,11 +792,13 @@ def plot_page3_eso_disturbance_rejection(df_eso, df_nmpc, df_pid, m_eso, m_nmpc,
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.savefig(save_path, dpi=300)
-    print(f"[Plot Page 3] Disturbance rejection figure saved to: {save_path}")
+    plt.close()
 
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(script_dir, "..", "data")
+    ind_dir = os.path.join(data_dir, "individual_plots")
+    os.makedirs(ind_dir, exist_ok=True)
 
     eso_file = find_latest_log(data_dir, "NMPC_ESO")
     nmpc_file = find_latest_log(data_dir, "NMPC")
@@ -540,7 +851,7 @@ def main():
 
     print_comparison_table(m_eso, m_nmpc, m_pid)
 
-    # Export 3 High-Resolution Thematic Comparison Pages (300 DPI)
+    # 1. Export 3 Combined Thematic Pages (300 DPI)
     p1_path = os.path.join(data_dir, "eval_page1_trajectory_tracking.png")
     p2_path = os.path.join(data_dir, "eval_page2_attitude_dynamics.png")
     p3_path = os.path.join(data_dir, "eval_page3_eso_disturbance_rejection.png")
@@ -549,8 +860,32 @@ def main():
     plot_page2_attitude_dynamics(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, p2_path)
     plot_page3_eso_disturbance_rejection(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, p3_path)
 
-    print("\n[Complete] All 3 academic evaluation pages successfully generated and saved to data/ folder!")
-    plt.show()
+    # 2. Export 12 Standalone High-Resolution Figures (300 DPI)
+    print(f"\n[Exporting] Generating 12 standalone high-resolution figures in {ind_dir} ...")
+    
+    # Topic 1 Standalone Plots
+    plot_single_xy_trajectory(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, os.path.join(ind_dir, "01_xy_trajectory_tracking.png"))
+    plot_single_3d_position_error(df_eso, df_nmpc, df_pid, os.path.join(ind_dir, "02_3d_position_error.png"))
+    plot_single_wind_axis_x_error(df_eso, df_nmpc, df_pid, os.path.join(ind_dir, "03_wind_axis_x_error.png"))
+    plot_single_tracking_precision_bar(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, os.path.join(ind_dir, "04_tracking_precision_bar.png"))
+
+    # Topic 2 Standalone Plots
+    plot_single_roll_angle(df_eso, df_nmpc, df_pid, os.path.join(ind_dir, "05_roll_angle_dynamics.png"))
+    plot_single_pitch_angle(df_eso, df_nmpc, df_pid, os.path.join(ind_dir, "06_pitch_angle_dynamics.png"))
+    plot_single_body_rate_smoothness(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, os.path.join(ind_dir, "07_body_rate_smoothness.png"))
+    plot_single_attitude_precision_bar(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, os.path.join(ind_dir, "08_attitude_precision_bar.png"))
+
+    # Topic 3 Standalone Plots
+    plot_single_eso_disturbance_estimation(df_eso, os.path.join(ind_dir, "09_eso_disturbance_estimation.png"))
+    plot_single_wind_axis_steady_bias(df_eso, df_nmpc, df_pid, os.path.join(ind_dir, "10_wind_axis_steady_bias.png"))
+    plot_single_itae_cumulative_growth(df_eso, df_nmpc, df_pid, os.path.join(ind_dir, "11_itae_cumulative_growth.png"))
+    plot_single_eso_superiority_bar(df_eso, df_nmpc, df_pid, m_eso, m_nmpc, m_pid, os.path.join(ind_dir, "12_eso_superiority_bar.png"))
+
+    print("\n" + "="*80)
+    print("  SUCCESS: All 3 combined pages + 12 individual plots exported successfully!")
+    print(f"  - Combined Pages : {data_dir}")
+    print(f"  - Individual Plots: {ind_dir}")
+    print("="*80)
 
 if __name__ == "__main__":
     main()
