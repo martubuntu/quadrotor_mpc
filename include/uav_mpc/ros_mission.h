@@ -7,6 +7,7 @@
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/TwistStamped.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Vector3Stamped.h>
 #include <std_msgs/Int8.h>
 #include <std_msgs/Float64.h>
 #include <std_msgs/Float32MultiArray.h>
@@ -64,7 +65,7 @@ class MPCRos
 
     ros::Time last_request;
     ros::ServiceClient arming_client, set_mode_client;  
-    ros::Subscriber state_sub, odom_sub, goal_sub, traj_sub, imu_sub;  
+    ros::Subscriber state_sub, odom_sub, goal_sub, traj_sub, imu_sub, eso_sub;  
     ros::Publisher cmd_pub;
     ros::Publisher debug_mode_pub;
     ros::Publisher debug_ref_pose_pub;
@@ -78,6 +79,9 @@ class MPCRos
     void odom_Callback(const nav_msgs::Odometry::ConstPtr& msg);
     void traj_Callback(const quadrotor_msgs::mpc_ref_traj::ConstPtr& msg);
     void imu_Callback(const sensor_msgs::Imu::ConstPtr& msg);
+    void eso_Callback(const geometry_msgs::Vector3Stamped::ConstPtr& msg);
+
+    Eigen::Vector3d eso_disturbance_;  // latest ESO disturbance estimate [m/s^2] in world frame
 
     void FSMProcess();
     void getTrajRef();

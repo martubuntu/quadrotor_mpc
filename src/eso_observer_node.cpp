@@ -18,8 +18,9 @@ public:
         : nh_(),
           pnh_("~")
     {
-        pnh_.param("observer_bw", observer_bw_, 4.0);
+        pnh_.param("observer_bw", observer_bw_, 8.0);
         pnh_.param("disturbance_limit", disturbance_limit_, 5.0);
+        pnh_.param("low_pass_alpha", low_pass_alpha_, 0.3);
 
         beta1_ = 3.0 * observer_bw_;
         beta2_ = 3.0 * observer_bw_ * observer_bw_;
@@ -66,6 +67,7 @@ public:
         z1_.setZero();
         z2_.setZero();
         z3_.setZero();
+        z3_filtered_.setZero();
 
         initialized_ = false;
 
@@ -77,8 +79,8 @@ public:
         current_rate_hz_ = 0.0;
         last_print_time_ = ros::Time::now();
 
-        ROS_INFO("[ESO] Observer initialized. Bandwidth = %.2f rad/s (b1=%.2f, b2=%.2f, b3=%.2f), Limit = %.1f m/s^2",
-                 observer_bw_, beta1_, beta2_, beta3_, disturbance_limit_);
+        ROS_INFO("[ESO] Observer initialized. Bandwidth = %.2f rad/s (b1=%.2f, b2=%.2f, b3=%.2f), Limit = %.1f m/s^2, LowPass alpha=%.2f",
+                 observer_bw_, beta1_, beta2_, beta3_, disturbance_limit_, low_pass_alpha_);
     }
 
 private:
@@ -183,6 +185,9 @@ private:
             z3_[i] = std::max(-disturbance_limit_, std::min(disturbance_limit_, z3_[i]));
         }
 
+        // 一阶低通滤波：平滑 ESO 扰动估计，抑制高频噪声被高带宽放大
+        z3_filtered_ = low_pass_alpha_ * z3_ + (1.0 - low_pass_alpha_) * z3_filtered_;
+
         publishEstimate(msg->header.stamp);
 
         // Print real-time ESO estimates and update rate at 1Hz
@@ -199,12 +204,13 @@ private:
 
     void publishEstimate(const ros::Time& stamp)
     {
+        // 发布低通滤波后的扰动估计（注入 ACADO 的值）
         geometry_msgs::Vector3Stamped d_msg;
         d_msg.header.stamp = stamp;
         d_msg.header.frame_id = "world";
-        d_msg.vector.x = z3_.x();
-        d_msg.vector.y = z3_.y();
-        d_msg.vector.z = z3_.z();
+        d_msg.vector.x = z3_filtered_.x();
+        d_msg.vector.y = z3_filtered_.y();
+        d_msg.vector.z = z3_filtered_.z();
         disturbance_pub_.publish(d_msg);
 
         geometry_msgs::Vector3Stamped v_msg;
@@ -275,15 +281,17 @@ private:
     double thrust_cmd_;
     double hover_thrust_;
 
-    Eigen::Vector3d z1_;  // estimated position
-    Eigen::Vector3d z2_;  // estimated velocity
-    Eigen::Vector3d z3_;  // estimated disturbance acceleration
+    Eigen::Vector3d z1_;          // estimated position
+    Eigen::Vector3d z2_;          // estimated velocity
+    Eigen::Vector3d z3_;          // raw ESO disturbance acceleration
+    Eigen::Vector3d z3_filtered_; // low-pass filtered disturbance (injected into MPC)
 
     bool initialized_;
     ros::Time last_stamp_;
     ros::Time last_print_time_;
     int step_count_;
     double current_rate_hz_;
+    double low_pass_alpha_;
 };
 
 int main(int argc, char** argv)

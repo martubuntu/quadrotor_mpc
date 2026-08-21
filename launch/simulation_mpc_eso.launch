@@ -4,7 +4,7 @@
   <arg name="ros_param_file" default="$(find uav_mpc)/config/mpc_simulation.yaml"/>
   <arg name="enable_logger" default="true"/>
   <arg name="log_rate" default="20.0"/>
-  <arg name="observer_bw" default="4.0"/>
+  <arg name="observer_bw" default="8.0"/>
   <arg name="disturbance_limit" default="5.0"/>
 
   <rosparam command="load" file="$(arg ros_param_file)"/>

@@ -18,6 +18,7 @@ MPCRos::MPCRos(ros::NodeHandle &nh):nh(nh)
   mpc_mode = AUTO_TAKEOFF;
   reference = Eigen::MatrixXd::Zero(Nreference, Ksample + 1);
   thrust_estimator = new ThrustEstimator(hover_thrust, 9.8066);
+  eso_disturbance_.setZero();
 }
 
 MPCRos::~MPCRos()
@@ -32,6 +33,7 @@ void MPCRos::ExectControl()
   state_sub = nh.subscribe<mavros_msgs::State> ("/mavros/state", 10, &MPCRos::state_Callback, this);
   traj_sub = nh.subscribe<quadrotor_msgs::mpc_ref_traj> ("/mpc_ref_traj", 1, &MPCRos::traj_Callback, this);
   imu_sub = nh.subscribe<sensor_msgs::Imu> ("/mavros/imu/data", 10, &MPCRos::imu_Callback, this);
+  eso_sub = nh.subscribe<geometry_msgs::Vector3Stamped> ("/eso/disturbance", 10, &MPCRos::eso_Callback, this);
   cmd_pub = nh.advertise<mavros_msgs::AttitudeTarget> ("/mavros/setpoint_raw/attitude", 1);
   debug_mode_pub = nh.advertise<std_msgs::Int8>("/mpc_debug/mode", 1);
   debug_ref_pose_pub = nh.advertise<geometry_msgs::PoseStamped>("/mpc_debug/ref_pose", 1);
@@ -272,6 +274,23 @@ void MPCRos::imu_Callback(const sensor_msgs::Imu::ConstPtr& msg)
 }
 
 
+void MPCRos::eso_Callback(const geometry_msgs::Vector3Stamped::ConstPtr& msg)
+{
+  // ESO 扰动前馈：仅在 TRACKING 阶段启用，避免 HOVER/TAKEOFF 时受噪声干扰
+  if (mpc_mode == AUTO_TRACKING)
+  {
+    // 限幅保护：单轴扰动最大 3 m/s^2，防止估计发散时破坏姿态参考
+    const double d_limit = 3.0;
+    eso_disturbance_.x() = std::max(-d_limit, std::min(d_limit, msg->vector.x));
+    eso_disturbance_.y() = std::max(-d_limit, std::min(d_limit, msg->vector.y));
+    eso_disturbance_.z() = std::max(-d_limit, std::min(d_limit, msg->vector.z));
+  }
+  else
+  {
+    eso_disturbance_.setZero();
+  }
+}
+
 void MPCRos::traj_Callback(const quadrotor_msgs::mpc_ref_traj::ConstPtr& msg)
 {
   traj_msg = *msg;
@@ -323,8 +342,10 @@ void MPCRos::getTrajRef()
   for (int k = 0; k < num_points; ++k)
   {
     const auto& point = traj_msg.mpc_ref_points[k];
-    acc << point.acceleration.x,
-           point.acceleration.y,
+    // 参考加速度 + 重力 - ESO前馈补偿
+    // ESO估计的是外部扰动加速度（顺风方向），减去它使参考姿态提前迎风倾斜
+    acc << point.acceleration.x - eso_disturbance_.x(),
+           point.acceleration.y - eso_disturbance_.y(),
            point.acceleration.z + 9.8066;
 
     acc2quaternion(acc, yaw_hold, quat);
