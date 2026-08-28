@@ -1,272 +1,208 @@
-#include <ros/ros.h>
-#include <ros/topic.h>
-#include <quadrotor_msgs/mpc_ref_point.h>
-#include <quadrotor_msgs/mpc_ref_traj.h>
-#include <geometry_msgs/PoseStamped.h>
-#include <nav_msgs/Odometry.h>
+#include <algorithm>
+#include <chrono>
 #include <cmath>
-#include <iostream>
-#include <vector>
+#include <functional>
+#include <memory>
 #include <string>
+
 #include <Eigen/Eigen>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <mavros_msgs/msg/state.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <rclcpp/rclcpp.hpp>
 
-#define DEFAULT_KSAMPLE 20
-#define DEFAULT_T_STEP 0.1
+#include "uav_mpc/msg/mpc_ref_point.hpp"
+#include "uav_mpc/msg/mpc_ref_traj.hpp"
 
-// 1D Quintic Polynomial for C2 continuous trajectory generation
+namespace
+{
+constexpr double kPi = 3.14159265358979323846;
+
 struct Quintic1D
 {
-    double c0, c1, c2, c3, c4, c5;
+  double c0{}, c1{}, c2{}, c3{}, c4{}, c5{};
 
-    void compute(double x0, double v0, double a0,
-                 double xf, double vf, double af,
-                 double T)
-    {
-        c0 = x0;
-        c1 = v0;
-        c2 = 0.5 * a0;
-        double T2 = T * T;
-        double T3 = T2 * T;
-        double T4 = T3 * T;
-        double T5 = T4 * T;
+  void compute(double x0, double v0, double a0, double xf, double vf, double af, double duration)
+  {
+    c0 = x0; c1 = v0; c2 = 0.5 * a0;
+    const double t2 = duration * duration;
+    const double t3 = t2 * duration;
+    const double t4 = t3 * duration;
+    const double t5 = t4 * duration;
+    const double h = xf - x0 - v0 * duration - 0.5 * a0 * t2;
+    const double dv = vf - v0 - a0 * duration;
+    const double da = af - a0;
+    c3 = (10.0 * h - 4.0 * dv * duration + 0.5 * da * t2) / t3;
+    c4 = (-15.0 * h + 7.0 * dv * duration - da * t2) / t4;
+    c5 = (6.0 * h - 3.0 * dv * duration + 0.5 * da * t2) / t5;
+  }
 
-        double h = xf - x0 - v0 * T - 0.5 * a0 * T2;
-        double v_diff = vf - v0 - a0 * T;
-        double a_diff = af - a0;
-
-        c3 = (10.0 * h - 4.0 * v_diff * T + 0.5 * a_diff * T2) / T3;
-        c4 = (-15.0 * h + 7.0 * v_diff * T - a_diff * T2) / T4;
-        c5 = (6.0 * h - 3.0 * v_diff * T + 0.5 * a_diff * T2) / T5;
-    }
-
-    void eval(double t, double &x, double &v, double &a) const
-    {
-        double t2 = t * t;
-        double t3 = t2 * t;
-        double t4 = t3 * t;
-        double t5 = t4 * t;
-
-        x = c0 + c1 * t + c2 * t2 + c3 * t3 + c4 * t4 + c5 * t5;
-        v = c1 + 2.0 * c2 * t + 3.0 * c3 * t2 + 4.0 * c4 * t3 + 5.0 * c5 * t4;
-        a = 2.0 * c2 + 6.0 * c3 * t + 12.0 * c4 * t2 + 20.0 * c5 * t3;
-    }
+  void evaluate(double t, double & x, double & v, double & a) const
+  {
+    const double t2 = t * t;
+    const double t3 = t2 * t;
+    const double t4 = t3 * t;
+    const double t5 = t4 * t;
+    x = c0 + c1*t + c2*t2 + c3*t3 + c4*t4 + c5*t5;
+    v = c1 + 2*c2*t + 3*c3*t2 + 4*c4*t3 + 5*c5*t4;
+    a = 2*c2 + 6*c3*t + 12*c4*t2 + 20*c5*t3;
+  }
 };
+}
 
-class CircleTrajGenerator
+class CircleTrajectoryNode : public rclcpp::Node
 {
-private:
-    ros::NodeHandle nh_;
-    ros::Publisher mpc_ref_pub_;
-    ros::Publisher debug_ref_path_pub_;
-
-    // Circle parameters
-    double radius_;
-    double linear_vel_;
-    double height_;
-    double omega_;
-    int cycles_;
-    double publish_rate_;
-    int k_sample_;
-    double t_step_;
-    std::string odom_topic_;
-
-    double center_x_;
-    double center_y_;
-    double center_z_;
-    double transition_time_;
-    double total_circle_duration_;
-
-    Quintic1D poly_x_;
-    Quintic1D poly_y_;
-    Quintic1D poly_z_;
-
 public:
-    CircleTrajGenerator(ros::NodeHandle &nh) : nh_(nh)
-    {
-        // Load parameters
-        nh_.param<double>("radius", radius_, 1.5);
-        nh_.param<double>("linear_vel", linear_vel_, 0.8);
-        nh_.param<double>("height", height_, 1.5);
-        nh_.param<int>("cycles", cycles_, 15);
-        nh_.param<double>("publish_rate", publish_rate_, 50.0);
-        nh_.param<int>("k_sample", k_sample_, DEFAULT_KSAMPLE);
-        nh_.param<double>("t_step", t_step_, DEFAULT_T_STEP);
-        nh_.param<double>("transition_time", transition_time_, 3.0); // 3 seconds smooth transition from center to perimeter
-        nh_.param<std::string>("odom_topic", odom_topic_, "/mavros/local_position/odom");
+  CircleTrajectoryNode()
+  : Node("circle_traj_node")
+  {
+    radius_ = declare_parameter<double>("radius", 1.5);
+    speed_ = declare_parameter<double>("linear_speed", 0.3);
+    height_ = declare_parameter<double>("height", 0.0);
+    cycles_ = declare_parameter<int>("cycles", 1);
+    publish_rate_ = declare_parameter<double>("publish_rate", 30.0);
+    horizon_steps_ = declare_parameter<int>("horizon_steps", 20);
+    horizon_dt_ = declare_parameter<double>("horizon_dt", 0.1);
+    transition_time_ = declare_parameter<double>("transition_time", 5.0);
+    const auto odom_topic = declare_parameter<std::string>(
+      "mavros_odom_topic", "/mavros/local_position/odom");
+    const auto state_topic = declare_parameter<std::string>(
+      "mavros_state_topic", "/mavros/state");
+    const auto trajectory_topic = declare_parameter<std::string>(
+      "trajectory_topic", "/mpc_ref_traj");
 
-        if (radius_ <= 0.05) radius_ = 0.05;
-        omega_ = linear_vel_ / radius_;
-        total_circle_duration_ = (cycles_ > 0) ? (transition_time_ + 2.0 * M_PI * cycles_ / omega_) : 1e9;
+    radius_ = std::max(0.1, radius_);
+    speed_ = std::max(0.05, speed_);
+    transition_time_ = std::max(1.0, transition_time_);
+    omega_ = speed_ / radius_;
 
-        mpc_ref_pub_ = nh_.advertise<quadrotor_msgs::mpc_ref_traj>("/mpc_ref_traj", 1);
-        debug_ref_path_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/circle_traj/current_ref", 1);
-
-        // 1. 读取初始悬停位置作为圆心 (Center)
-        ROS_INFO("[CircleTraj] Waiting for vehicle odometry on %s to set circle center...", odom_topic_.c_str());
-        nav_msgs::OdometryConstPtr odom = ros::topic::waitForMessage<nav_msgs::Odometry>(
-            odom_topic_, nh_, ros::Duration(5.0));
-
-        if (odom)
-        {
-            center_x_ = odom->pose.pose.position.x;
-            center_y_ = odom->pose.pose.position.y;
-            center_z_ = (height_ > 0.3) ? height_ : odom->pose.pose.position.z;
-            ROS_INFO("[CircleTraj] Hover position locked as circle center: Center (%.2f, %.2f, %.2f)", center_x_, center_y_, center_z_);
+    odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      odom_topic, rclcpp::SensorDataQoS(),
+      [this](const nav_msgs::msg::Odometry::SharedPtr msg) {
+        if (!center_locked_ && offboard_active_) {
+          center_.x() = msg->pose.pose.position.x;
+          center_.y() = msg->pose.pose.position.y;
+          center_.z() = height_ > 0.0 ? height_ : msg->pose.pose.position.z;
+          initializeTransition();
+          center_locked_ = true;
+          start_time_ = now();
+          RCLCPP_INFO(
+            get_logger(), "Circle center locked at (%.2f, %.2f, %.2f).",
+            center_.x(), center_.y(), center_.z());
         }
-        else
-        {
-            center_x_ = 0.0;
-            center_y_ = 0.0;
-            center_z_ = height_;
-            ROS_WARN("[CircleTraj] Odometry timeout, using default center: (0.0, 0.0, %.2f)", height_);
-        }
+      });
+    state_sub_ = create_subscription<mavros_msgs::msg::State>(
+      state_topic, rclcpp::QoS(10),
+      [this](const mavros_msgs::msg::State::SharedPtr msg) {
+        offboard_active_ = msg->connected && msg->armed && msg->mode == "OFFBOARD";
+      });
+    trajectory_pub_ = create_publisher<uav_mpc::msg::MpcRefTraj>(trajectory_topic, 1);
+    debug_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(
+      "/circle_traj/current_ref", 10);
 
-        // 2. 初始化从圆心 (center_x, center_y) 到圆周固定切入点 (center_x + R, center_y) 的五次多项式平滑切入曲线
-        // 边界条件：
-        // 起点 t=0 (圆心): pos=(cx, cy, cz), vel=(0, 0, 0), acc=(0, 0, 0)
-        // 终点 t=T_trans (圆周起点): pos=(cx + R, cy, cz), vel=(0, R*omega, 0), acc=(-R*omega^2, 0, 0) (与圆周切向速度和向心加速度严格连续匹配)
-        poly_x_.compute(center_x_, 0.0, 0.0,
-                        center_x_ + radius_, 0.0, -radius_ * omega_ * omega_,
-                        transition_time_);
+    const auto period = std::chrono::milliseconds(
+      static_cast<int>(1000.0 / std::max(1.0, publish_rate_)));
+    timer_ = create_wall_timer(period, std::bind(&CircleTrajectoryNode::publishTrajectory, this));
+  }
 
-        poly_y_.compute(center_y_, 0.0, 0.0,
-                        center_y_, radius_ * omega_, 0.0,
-                        transition_time_);
+private:
+  void initializeTransition()
+  {
+    poly_x_.compute(
+      center_.x(), 0.0, 0.0, center_.x() + radius_, 0.0,
+      -radius_ * omega_ * omega_, transition_time_);
+    poly_y_.compute(
+      center_.y(), 0.0, 0.0, center_.y(), radius_ * omega_, 0.0, transition_time_);
+    poly_z_.compute(center_.z(), 0.0, 0.0, center_.z(), 0.0, 0.0, transition_time_);
+  }
 
-        poly_z_.compute(center_z_, 0.0, 0.0,
-                        center_z_, 0.0, 0.0,
-                        transition_time_);
-
-        ROS_INFO("[CircleTraj] Trajectory Config: Center(%.2f, %.2f, %.2f) -> Transition to Perimeter Start(%.2f, %.2f, %.2f) in %.1fs -> Circling (R=%.2fm, V=%.2fm/s, Omega=%.3frad/s, Cycles=%d)",
-                 center_x_, center_y_, center_z_, center_x_ + radius_, center_y_, center_z_, transition_time_, radius_, linear_vel_, omega_, cycles_);
+  void evaluate(double t, Eigen::Vector3d & p, Eigen::Vector3d & v, Eigen::Vector3d & a) const
+  {
+    const double circle_duration = cycles_ > 0 ? 2.0 * kPi * cycles_ / omega_ : 1e9;
+    if (t < transition_time_) {
+      poly_x_.evaluate(t, p.x(), v.x(), a.x());
+      poly_y_.evaluate(t, p.y(), v.y(), a.y());
+      poly_z_.evaluate(t, p.z(), v.z(), a.z());
+      return;
     }
-
-    void evaluateTraj(double t_query, Eigen::Vector3d &p, Eigen::Vector3d &v, Eigen::Vector3d &a)
-    {
-        if (t_query <= 0.0)
-        {
-            // 阶段 0：未启动前，保持在初始悬停圆心点
-            p << center_x_, center_y_, center_z_;
-            v << 0.0, 0.0, 0.0;
-            a << 0.0, 0.0, 0.0;
-        }
-        else if (t_query < transition_time_)
-        {
-            // 阶段 1：平滑切入阶段 (0s ~ transition_time_): 从圆心飞往固定圆周起点 (cx + R, cy)
-            double px, py, pz, vx, vy, vz, ax, ay, az;
-            poly_x_.eval(t_query, px, vx, ax);
-            poly_y_.eval(t_query, py, vy, ay);
-            poly_z_.eval(t_query, pz, vz, az);
-
-            p << px, py, pz;
-            v << vx, vy, vz;
-            a << ax, ay, az;
-        }
-        else if (cycles_ > 0 && t_query >= total_circle_duration_)
-        {
-            // 阶段 3：完成所有圈数后，在终点悬停
-            p << center_x_ + radius_, center_y_, center_z_;
-            v << 0.0, 0.0, 0.0;
-            a << 0.0, 0.0, 0.0;
-        }
-        else
-        {
-            // 阶段 2：以 (cx, cy) 为圆心稳定绕圆 (theta 从 0 持续递增)
-            double t_circle = t_query - transition_time_;
-            double theta = omega_ * t_circle;
-
-            p << center_x_ + radius_ * std::cos(theta),
-                 center_y_ + radius_ * std::sin(theta),
-                 center_z_;
-
-            v << -radius_ * omega_ * std::sin(theta),
-                  radius_ * omega_ * std::cos(theta),
-                  0.0;
-
-            a << -radius_ * omega_ * omega_ * std::cos(theta),
-                 -radius_ * omega_ * omega_ * std::sin(theta),
-                  0.0;
-        }
+    const double circle_time = std::min(t - transition_time_, circle_duration);
+    const double theta = omega_ * circle_time;
+    p << center_.x() + radius_ * std::cos(theta),
+      center_.y() + radius_ * std::sin(theta), center_.z();
+    if (circle_time >= circle_duration) {
+      v.setZero(); a.setZero();
+      return;
     }
+    v << -radius_ * omega_ * std::sin(theta),
+      radius_ * omega_ * std::cos(theta), 0.0;
+    a << -radius_ * omega_ * omega_ * std::cos(theta),
+      -radius_ * omega_ * omega_ * std::sin(theta), 0.0;
+  }
 
-    void run()
-    {
-        ros::Rate rate(publish_rate_);
-        // 短暂延时确保 subscriber 建立连接
-        ros::Duration(0.5).sleep();
-        ros::Time node_start = ros::Time::now();
-
-        while (ros::ok())
-        {
-            ros::Time now = ros::Time::now();
-            double t_active = (now - node_start).toSec();
-
-            quadrotor_msgs::mpc_ref_traj traj_msg;
-            traj_msg.mpc_ref_points.reserve(k_sample_ + 1);
-
-            // Fill MPC horizon (k_sample + 1 points)
-            for (int i = 0; i <= k_sample_; ++i)
-            {
-                double query_t = t_active + i * t_step_;
-                Eigen::Vector3d p, v, a;
-                evaluateTraj(query_t, p, v, a);
-
-                quadrotor_msgs::mpc_ref_point point_msg;
-                point_msg.position.x = p[0];
-                point_msg.position.y = p[1];
-                point_msg.position.z = p[2];
-                point_msg.velocity.x = v[0];
-                point_msg.velocity.y = v[1];
-                point_msg.velocity.z = v[2];
-                point_msg.acceleration.x = a[0];
-                point_msg.acceleration.y = a[1];
-                point_msg.acceleration.z = a[2];
-
-                traj_msg.mpc_ref_points.push_back(point_msg);
-            }
-
-            // Goal definition: 巡航过程中将 goal 设为远端，仅在完成全部圈数后指向终点
-            if (cycles_ > 0 && t_active >= total_circle_duration_)
-            {
-                traj_msg.goal.x = center_x_ + radius_;
-                traj_msg.goal.y = center_y_;
-                traj_msg.goal.z = center_z_;
-            }
-            else
-            {
-                traj_msg.goal.x = 9999.0;
-                traj_msg.goal.y = 9999.0;
-                traj_msg.goal.z = 9999.0;
-            }
-
-            mpc_ref_pub_.publish(traj_msg);
-
-            // Publish visual debug pose
-            if (!traj_msg.mpc_ref_points.empty())
-            {
-                geometry_msgs::PoseStamped debug_pose;
-                debug_pose.header.stamp = now;
-                debug_pose.header.frame_id = "world";
-                debug_pose.pose.position.x = traj_msg.mpc_ref_points[0].position.x;
-                debug_pose.pose.position.y = traj_msg.mpc_ref_points[0].position.y;
-                debug_pose.pose.position.z = traj_msg.mpc_ref_points[0].position.z;
-                debug_pose.pose.orientation.w = 1.0;
-                debug_ref_path_pub_.publish(debug_pose);
-            }
-
-            ros::spinOnce();
-            rate.sleep();
-        }
+  void publishTrajectory()
+  {
+    if (!center_locked_) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000, "Waiting for odometry before starting trajectory.");
+      return;
     }
+    const double active_time = (now() - start_time_).seconds();
+    uav_mpc::msg::MpcRefTraj trajectory;
+    trajectory.mpc_ref_points.reserve(horizon_steps_ + 1);
+    for (int i = 0; i <= horizon_steps_; ++i) {
+      Eigen::Vector3d p, v, a;
+      evaluate(active_time + i * horizon_dt_, p, v, a);
+      uav_mpc::msg::MpcRefPoint point;
+      point.position.x = p.x(); point.position.y = p.y(); point.position.z = p.z();
+      point.velocity.x = v.x(); point.velocity.y = v.y(); point.velocity.z = v.z();
+      point.acceleration.x = a.x(); point.acceleration.y = a.y(); point.acceleration.z = a.z();
+      trajectory.mpc_ref_points.push_back(point);
+    }
+    const double end_time = transition_time_ + 2.0 * kPi * std::max(0, cycles_) / omega_;
+    if (cycles_ > 0 && active_time >= end_time) {
+      trajectory.goal.x = center_.x() + radius_;
+      trajectory.goal.y = center_.y();
+      trajectory.goal.z = center_.z();
+    } else {
+      trajectory.goal.x = trajectory.goal.y = trajectory.goal.z = 9999.0;
+    }
+    trajectory_pub_->publish(trajectory);
+
+    geometry_msgs::msg::PoseStamped debug;
+    debug.header.stamp = now();
+    debug.header.frame_id = "map";
+    debug.pose.position.x = trajectory.mpc_ref_points.front().position.x;
+    debug.pose.position.y = trajectory.mpc_ref_points.front().position.y;
+    debug.pose.position.z = trajectory.mpc_ref_points.front().position.z;
+    debug.pose.orientation.w = 1.0;
+    debug_pub_->publish(debug);
+  }
+
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<mavros_msgs::msg::State>::SharedPtr state_sub_;
+  rclcpp::Publisher<uav_mpc::msg::MpcRefTraj>::SharedPtr trajectory_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr debug_pub_;
+  rclcpp::TimerBase::SharedPtr timer_;
+  Eigen::Vector3d center_{Eigen::Vector3d::Zero()};
+  Quintic1D poly_x_, poly_y_, poly_z_;
+  rclcpp::Time start_time_{0, 0, RCL_ROS_TIME};
+  bool center_locked_{false};
+  bool offboard_active_{false};
+  double radius_{1.5};
+  double speed_{0.3};
+  double height_{0.0};
+  double omega_{0.2};
+  double publish_rate_{30.0};
+  double horizon_dt_{0.1};
+  double transition_time_{5.0};
+  int cycles_{1};
+  int horizon_steps_{20};
 };
 
-int main(int argc, char **argv)
+int main(int argc, char ** argv)
 {
-    ros::init(argc, argv, "circle_traj_node");
-    ros::NodeHandle nh("~");
-
-    CircleTrajGenerator generator(nh);
-    generator.run();
-
-    return 0;
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<CircleTrajectoryNode>());
+  rclcpp::shutdown();
+  return 0;
 }

@@ -1,100 +1,93 @@
-#ifndef ROSMission_H
-#define ROSMission_H
+#pragma once
 
-#include <math.h>
-// Ros
-#include "ros/ros.h"
-#include <nav_msgs/Odometry.h>
-#include <geometry_msgs/TwistStamped.h>
-#include <geometry_msgs/PoseStamped.h>
-#include <geometry_msgs/Vector3Stamped.h>
-#include <std_msgs/Int8.h>
-#include <std_msgs/Float64.h>
-#include <std_msgs/Float32MultiArray.h>
-#include <mavros_msgs/AttitudeTarget.h>
-#include <mavros_msgs/CommandBool.h>
-#include <mavros_msgs/SetMode.h>
-#include <mavros_msgs/State.h>
-#include <sensor_msgs/Imu.h>
-#include <quadrotor_msgs/mpc_ref_point.h>
-#include <quadrotor_msgs/mpc_ref_traj.h>
-// Eigen
+#include <cstdint>
+#include <memory>
+#include <string>
+
 #include <Eigen/Eigen>
-// MPC Solver
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/vector3_stamped.hpp>
+#include <mavros_msgs/msg/attitude_target.hpp>
+#include <mavros_msgs/msg/state.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+#include <std_msgs/msg/float32_multi_array.hpp>
+#include <std_msgs/msg/float64.hpp>
+#include <std_msgs/msg/int8.hpp>
+
 #include "uav_mpc/mpc_wrapper.h"
 #include "uav_mpc/thrust_estimator.h"
-
-#define Ksample    20
-#define Nreference 14
-
-enum MPCMode
-{
-  AUTO_TAKEOFF,
-  AUTO_HOVER,
-  AUTO_TRACKING
-};
+#include "uav_mpc/msg/mpc_ref_traj.hpp"
 
 class MPCRos
 {
-  // Parameters
-  private:
-    double mass = 1.5;
-    double hover_thrust = 0.4;
-    double takeoff_height = 1.3;
-    double ctrl_hz = 100;
-    std::string odomTopicName;
-    bool auto_arm_and_offboard = false;
+public:
+  explicit MPCRos(const rclcpp::Node::SharedPtr & node);
+  void start();
 
-  private:
-    ros::NodeHandle &nh;
-    
-    bool odom_flag = 0; 
-    bool fsm_switch = 1;
-    bool mpc_init = 0;  
-    bool reached = 0;
-    bool has_solution;
+private:
+  enum class Mode : int8_t {WAITING = -1, HOVER = 1, TRACKING = 2};
 
-    mavros_msgs::SetMode offb_set_mode;
-    mavros_msgs::CommandBool arm_cmd;
-    mavros_msgs::State current_state;
-    nav_msgs::Odometry current_odom, start_odom, hover_odom;
-    geometry_msgs::PoseStamped nav_goal;
-    quadrotor_msgs::mpc_ref_traj traj_msg;
-    MPCMode mpc_mode;
-    Eigen::Vector4f control;
+  void controlTimer();
+  void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+  void stateCallback(const mavros_msgs::msg::State::SharedPtr msg);
+  void trajectoryCallback(const uav_mpc::msg::MpcRefTraj::SharedPtr msg);
+  void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg);
+  void esoCallback(const geometry_msgs::msg::Vector3Stamped::SharedPtr msg);
 
-    ros::Time last_request;
-    ros::ServiceClient arming_client, set_mode_client;  
-    ros::Subscriber state_sub, odom_sub, goal_sub, traj_sub, imu_sub, eso_sub;  
-    ros::Publisher cmd_pub;
-    ros::Publisher debug_mode_pub;
-    ros::Publisher debug_ref_pose_pub;
-    ros::Publisher debug_control_pub;
-    ros::Publisher debug_hover_thrust_pub;
-    
-    MPCWrapper *wrapper;
-    ThrustEstimator *thrust_estimator;
+  void fillHoverReference();
+  void fillTrajectoryReference();
+  Eigen::Quaterniond accelerationToQuaternion(
+    const Eigen::Vector3d & acceleration, double yaw) const;
+  void publishControl(Eigen::Vector4f control, bool active);
+  void publishDebug();
+  double currentYaw() const;
 
-    void state_Callback(const mavros_msgs::State::ConstPtr& msg);
-    void odom_Callback(const nav_msgs::Odometry::ConstPtr& msg);
-    void traj_Callback(const quadrotor_msgs::mpc_ref_traj::ConstPtr& msg);
-    void imu_Callback(const sensor_msgs::Imu::ConstPtr& msg);
-    void eso_Callback(const geometry_msgs::Vector3Stamped::ConstPtr& msg);
+  rclcpp::Node::SharedPtr node_;
+  std::unique_ptr<MPCWrapper> wrapper_;
+  std::unique_ptr<ThrustEstimator> thrust_estimator_;
 
-    Eigen::Vector3d eso_disturbance_;  // latest ESO disturbance estimate [m/s^2] in world frame
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<mavros_msgs::msg::State>::SharedPtr state_sub_;
+  rclcpp::Subscription<uav_mpc::msg::MpcRefTraj>::SharedPtr trajectory_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::Vector3Stamped>::SharedPtr eso_sub_;
+  rclcpp::Publisher<mavros_msgs::msg::AttitudeTarget>::SharedPtr command_pub_;
+  rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr mode_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr reference_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr raw_control_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr hover_thrust_pub_;
+  rclcpp::TimerBase::SharedPtr control_timer_;
 
-    void FSMProcess();
-    void getTrajRef();
-    void acc2quaternion(const Eigen::Vector3d &vector_acc, const double &yaw, Eigen::Vector4d &quat);
-    bool reachgoal(nav_msgs::Odometry& msg, Eigen::Vector3f& goal);
-    void publishcontrol();
+  nav_msgs::msg::Odometry current_odom_;
+  nav_msgs::msg::Odometry hover_odom_;
+  mavros_msgs::msg::State current_state_;
+  uav_mpc::msg::MpcRefTraj trajectory_;
+  Eigen::MatrixXd reference_{Eigen::MatrixXd::Zero(NY, N + 1)};
+  Eigen::Vector4f control_{Eigen::Vector4f::Zero()};
+  Eigen::Vector3d eso_disturbance_{Eigen::Vector3d::Zero()};
 
-  public:
-    MPCRos(ros::NodeHandle &nh);
-    ~MPCRos();
-    void ExectControl();
-    
+  bool has_odom_{false};
+  bool has_state_{false};
+  bool has_trajectory_{false};
+  bool solver_initialized_{false};
+  bool use_eso_{false};
+  bool eso_valid_{false};
+  bool adaptive_thrust_model_{false};
+  Mode mode_{Mode::WAITING};
+  rclcpp::Time last_eso_stamp_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_trajectory_stamp_{0, 0, RCL_ROS_TIME};
+
+  double control_rate_hz_{30.0};
+  double hover_thrust_{0.5};
+  double thrust_min_{0.15};
+  double thrust_max_{0.80};
+  double body_rate_limit_{2.0};
+  double eso_timeout_sec_{0.2};
+  double eso_limit_{3.0};
+  double trajectory_timeout_sec_{0.5};
+  double prediction_dt_{0.1};
+  std::string frame_id_{"map"};
+  std::string conflicting_setpoint_topic_{"/mavros/setpoint_raw/local"};
 };
-
-#endif
-

@@ -1,36 +1,32 @@
-cmake_minimum_required(VERSION 3.0.2)
+cmake_minimum_required(VERSION 3.8)
 project(uav_mpc)
-set(CMAKE_BUILD_TYPE "Release")
-add_compile_options(-std=c++14)
 
-find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  rospy
-  std_msgs
-  geometry_msgs
-  message_generation
-  roslib
-)
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(mavros_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 
-add_message_files(
-  FILES
-  mpc_ref_point.msg
-  mpc_ref_traj.msg
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/MpcRefPoint.msg"
+  "msg/MpcRefTraj.msg"
+  DEPENDENCIES geometry_msgs
 )
 
-generate_messages(
-  DEPENDENCIES
-  geometry_msgs
-  std_msgs
-)
-
-catkin_package(
-  CATKIN_DEPENDS roscpp rospy std_msgs geometry_msgs message_runtime roslib
-)
-
-add_library(mpc_solver
+add_library(mpc_solver STATIC
   externals/qpoases/SRC/Bounds.cpp
   externals/qpoases/SRC/Constraints.cpp
   externals/qpoases/SRC/CyclingManager.cpp
@@ -44,59 +40,40 @@ add_library(mpc_solver
   model/quadrotor_mpc_codegen/acado_qpoases_interface.cpp
   model/quadrotor_mpc_codegen/acado_integrator.c
   model/quadrotor_mpc_codegen/acado_solver.c
-  model/quadrotor_mpc_codegen/acado_auxiliary_functions.c)
-  
-target_include_directories(mpc_solver PUBLIC
-  model/quadrotor_mpc_codegen/
-  externals/qpoases
-  externals/qpoases/INCLUDE
-  externals/qpoases/SRC)
-  
-include_directories(
-  include
-  ${PROJECT_SOURCE_DIR}/model/quadrotor_mpc_codegen
-  ${PROJECT_SOURCE_DIR}/externals/qpoases
-  ${PROJECT_SOURCE_DIR}/include
-  ${EIGEN_INCLUDE_DIRS}
-  ${EIGEN3_INCLUDE_DIRS}
-  /usr/include/eigen3
-  ${catkin_INCLUDE_DIRS}
+  model/quadrotor_mpc_codegen/acado_auxiliary_functions.c
 )
 
-add_executable(mpc_node
-  src/mpc_node.cpp
-  src/mpc_wrapper.cpp
-  src/ros_mission.cpp)
-  
-target_link_libraries(mpc_node
-  mpc_solver
-  ${catkin_LIBRARIES})
-add_dependencies(mpc_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_include_directories(mpc_solver PUBLIC
+  model/quadrotor_mpc_codegen
+  externals/qpoases
+  externals/qpoases/INCLUDE
+  externals/qpoases/SRC
+)
+set_target_properties(mpc_solver PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_executable(eso_observer_node
-  src/eso_observer_node.cpp)
+add_library(mpc_ros_core src/mpc_wrapper.cpp src/ros_mission.cpp)
+target_include_directories(mpc_ros_core PUBLIC include ${EIGEN3_INCLUDE_DIRS})
+target_link_libraries(mpc_ros_core mpc_solver Eigen3::Eigen)
+ament_target_dependencies(mpc_ros_core
+  rclcpp geometry_msgs nav_msgs sensor_msgs std_msgs mavros_msgs)
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(mpc_ros_core "${cpp_typesupport_target}")
 
-target_link_libraries(eso_observer_node
-  ${catkin_LIBRARIES})
-add_dependencies(eso_observer_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_executable(mpc_node src/mpc_node.cpp)
+target_link_libraries(mpc_node mpc_ros_core)
+ament_target_dependencies(mpc_node rclcpp)
 
-add_executable(circle_traj_node
-  src/circle_traj_node.cpp)
+add_executable(circle_traj_node src/circle_traj_node.cpp)
+target_include_directories(circle_traj_node PRIVATE ${EIGEN3_INCLUDE_DIRS})
+target_link_libraries(circle_traj_node Eigen3::Eigen "${cpp_typesupport_target}")
+ament_target_dependencies(circle_traj_node rclcpp geometry_msgs nav_msgs mavros_msgs)
 
-target_link_libraries(circle_traj_node
-  ${catkin_LIBRARIES})
-add_dependencies(circle_traj_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+install(TARGETS mpc_solver mpc_ros_core mpc_node circle_traj_node
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION lib/${PROJECT_NAME})
+install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY include/ DESTINATION include)
 
-add_executable(data_logger_node
-  src/data_logger_node.cpp)
-
-target_link_libraries(data_logger_node
-  ${catkin_LIBRARIES})
-add_dependencies(data_logger_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-
-add_executable(pid_baseline_node
-  src/pid_baseline_node.cpp)
-
-target_link_libraries(pid_baseline_node
-  ${catkin_LIBRARIES})
-add_dependencies(pid_baseline_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+ament_export_dependencies(rosidl_default_runtime)
+ament_package()

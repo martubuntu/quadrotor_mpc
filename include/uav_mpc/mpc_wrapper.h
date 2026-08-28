@@ -1,77 +1,61 @@
-#ifndef MPCWrapper_H
-#define MPCWrapper_H
+#pragma once
 
-#include <thread>
-// Eigen
+#include <memory>
+
 #include <Eigen/Eigen>
-// Ros
-#include <ros/ros.h>
-#include <geometry_msgs/PoseStamped.h>
-#include <geometry_msgs/PointStamped.h>
-#include <geometry_msgs/Vector3Stamped.h>
-#include <nav_msgs/Odometry.h>
-#include <nav_msgs/Path.h>
-#include <std_msgs/Bool.h>
-#include <std_msgs/Empty.h>
-#include <std_msgs/Float32MultiArray.h>
-// ACADO
-#include "acado_common.h"
+#include <nav_msgs/msg/odometry.hpp>
+#include <rclcpp/rclcpp.hpp>
+
 #include "acado_auxiliary_functions.h"
+#include "acado_common.h"
 
-
-/* Some convenient definitions. */
-#define NX          ACADO_NX  /* Number of differential state variables.  */
-#define NXA         ACADO_NXA /* Number of algebraic variables. */
-#define NU          ACADO_NU  /* Number of control inputs. */
-#define NOD         ACADO_NOD  /* Number of online data values. */
-
-#define NY          ACADO_NY  /* Number of measurements/references on nodes 0..N - 1. */
-#define NYN         ACADO_NYN /* Number of measurements/references on node N. */
-
-#define N           ACADO_N   /* Number of intervals in the horizon. */
-
-#define NUM_STEPS   10        /* Number of real-time iterations. */
-#define VERBOSE     1         /* Show iterations: 1, silent: 0.  */
+#define NX ACADO_NX
+#define NU ACADO_NU
+#define NOD ACADO_NOD
+#define NY ACADO_NY
+#define NYN ACADO_NYN
+#define N ACADO_N
 
 class MPCWrapper
 {
-  // MPC Para
-  private:
-    double cost_px, cost_py, cost_pz;
-    double cost_qw, cost_qx, cost_qy, cost_qz;
-    double cost_vx, cost_vy, cost_vz;
-    double cost_thrust, cost_wx, cost_wy, cost_wz;
-    double T_max, T_min, wx_max, wx_min, wy_max, wy_min, wz_max, wz_min;
+public:
+  explicit MPCWrapper(const rclcpp::Node::SharedPtr & node);
 
-  private:
-    ros::NodeHandle &nh;
-    int status;
-    acado_timer t;
+  bool initSolver(const nav_msgs::msg::Odometry & odom);
+  void setReference(const Eigen::MatrixXd & reference);
+  void setDisturbance(const Eigen::Vector3d & disturbance, bool valid);
+  bool getSolution(const nav_msgs::msg::Odometry & odom, Eigen::Vector4f & control);
 
-    void updateState(nav_msgs::Odometry& msg);
-    void updateOnlineData();
-    void publishDebugData();
+private:
+  void updateState(const nav_msgs::msg::Odometry & odom);
+  void updateOnlineData();
 
-    ros::Publisher pub_pred_path;
-    ros::Publisher pub_ref_path;
-    ros::Publisher pub_pred_u;
-    ros::Publisher pub_x0;
+  rclcpp::Node::SharedPtr node_;
 
-    // ESO disturbance feedforward interface
-    ros::Subscriber eso_sub;
-    Eigen::Vector3d disturbance_;
-    ros::Time disturbance_stamp_;
-    bool disturbance_received_;
-    void esoCallback(const geometry_msgs::Vector3Stamped::ConstPtr& msg);
+  double cost_px_{};
+  double cost_py_{};
+  double cost_pz_{};
+  double cost_qw_{};
+  double cost_qx_{};
+  double cost_qy_{};
+  double cost_qz_{};
+  double cost_vx_{};
+  double cost_vy_{};
+  double cost_vz_{};
+  double cost_at_{};
+  double cost_wx_{};
+  double cost_wy_{};
+  double cost_wz_{};
 
-  public:
-    MPCWrapper(ros::NodeHandle &nh);
-    ~MPCWrapper();
-    bool initSolver(nav_msgs::Odometry& msg);
-    void gerReference(const Eigen::MatrixXd& ref);
-    bool getSolution(nav_msgs::Odometry& msg, Eigen::Vector4f& control);
+  double at_max_{};
+  double at_min_{};
+  double wx_max_{};
+  double wx_min_{};
+  double wy_max_{};
+  double wy_min_{};
+  double wz_max_{};
+  double wz_min_{};
 
+  Eigen::Vector3d disturbance_{Eigen::Vector3d::Zero()};
+  bool disturbance_valid_{false};
 };
-
-
-#endif

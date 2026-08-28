@@ -1,41 +1,70 @@
-# Quadrotor MPC Control Parameters
-mass: 1.30
-hover_thrust: 0.39      # Initial hover thrust percentage (0.0 ~ 1.0)
-takeoff_height: 0.8     # Target takeoff height in meters
-ctrl_hz: 100            # Control loop frequency in Hz
-auto_arm_and_offboard: false  # Safety switch: false = manual arm/offboard switch via RC transmitter; true = auto arm/offboard
+uav_mpc_node:
+  ros__parameters:
+    # Same real-flight conventions as uav_pid_mavros: manual ARM and OFFBOARD.
+    auto_arm: false
+    auto_offboard: false
+    control_rate_hz: 30.0
 
-# Odometry topic (must be nav_msgs/Odometry format with position, orientation, linear velocity)
-# Examples:
-#   /mavros/local_position/odom
-#   /vins_estimator/odometry
-#   /Odometry
-odomTopicName: /mavros/local_position/odom
+    mavros_state_topic: "/mavros/state"
+    mavros_odom_topic: "/mavros/local_position/odom"
+    mavros_imu_topic: "/mavros/imu/data"
+    mavros_attitude_setpoint_topic: "/mavros/setpoint_raw/attitude"
+    conflicting_setpoint_topic: "/mavros/setpoint_raw/local"
+    trajectory_topic: "/mpc_ref_traj"
+    rviz_frame_id: "map"
 
-# MPC Constraints
-boundings:
-  T_max: 25.0
-  T_min: 2.0
-  wx_max: 2.0
-  wx_min: -2.0
-  wy_max: 2.0
-  wy_min: -2.0
-  wz_max: 2.0
-  wz_min: -2.0
+    # aT [m/s^2] -> normalized PX4 collective thrust.
+    # Calibrate hover_thrust on the actual 5 kg aircraft before flight.
+    hover_thrust: 0.50
+    thrust_min: 0.15
+    thrust_max: 0.80
+    body_rate_limit: 1.5
+    adaptive_thrust_model: false
 
-# MPC Cost Weights (Q, R)
-cost:
-  cost_px: 100
-  cost_py: 100
-  cost_pz: 100
-  cost_qw: 100
-  cost_qx: 100
-  cost_qy: 100
-  cost_qz: 100
-  cost_vx: 30
-  cost_vy: 30
-  cost_vz: 30
-  cost_thrust: 30
-  cost_wx: 30
-  cost_wy: 30
-  cost_wz: 30
+    # ESO is optional and disabled for the first real-flight deployment.
+    use_eso: false
+    eso_topic: "/eso/disturbance"
+    eso_timeout_sec: 0.20
+    eso_limit: 3.0
+    trajectory_timeout_sec: 0.50
+    prediction_dt: 0.10
+
+    bounds:
+      specific_thrust_max: 20.0
+      specific_thrust_min: 2.0
+      wx_max: 1.5
+      wx_min: -1.5
+      wy_max: 1.5
+      wy_min: -1.5
+      wz_max: 1.0
+      wz_min: -1.0
+
+    cost:
+      px: 100.0
+      py: 100.0
+      pz: 100.0
+      qw: 100.0
+      qx: 100.0
+      qy: 100.0
+      qz: 100.0
+      vx: 30.0
+      vy: 30.0
+      vz: 30.0
+      specific_thrust: 30.0
+      wx: 30.0
+      wy: 30.0
+      wz: 30.0
+
+circle_traj_node:
+  ros__parameters:
+    mavros_state_topic: "/mavros/state"
+    mavros_odom_topic: "/mavros/local_position/odom"
+    trajectory_topic: "/mpc_ref_traj"
+    radius: 1.5
+    linear_speed: 0.20
+    height: 0.0
+    cycles: 1
+    transition_time: 8.0
+    publish_rate: 30.0
+    horizon_steps: 20
+    horizon_dt: 0.1

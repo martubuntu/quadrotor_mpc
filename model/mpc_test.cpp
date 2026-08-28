@@ -42,7 +42,8 @@ int main(int argc, char * const argv[ ])
 	DifferentialState     p_x, p_y, p_z;
   DifferentialState     q_w, q_x, q_y, q_z;
   DifferentialState     v_x, v_y, v_z;
-  Control               T, w_x, w_y, w_z;
+  // a_T is collective specific thrust (thrust acceleration), unit: m/s^2.
+  Control               a_T, w_x, w_y, w_z;
   DifferentialEquation  f;
   Function              h, hN;
 
@@ -54,9 +55,8 @@ int main(int argc, char * const argv[ ])
   const double g_z = 9.8066;      // Gravity is everywhere [m/s^2]
   const double w_max_yaw = 1;     // Maximal yaw rate [rad/s]
   const double w_max_xy = 3;      // Maximal pitch and roll rate [rad/s]
-  const double T_min = 2;         // Minimal thrust [N]
-  const double T_max = 20;        // Maximal thrust [N]
-  const double mass = 1.0;        // Mass 1.5 [kg]
+  const double a_T_min = 2;       // Minimal specific thrust [m/s^2]
+  const double a_T_max = 20;      // Maximal specific thrust [m/s^2]
 
   // Bias to prevent division by zero.
   const double epsilon = 0.1;     // Camera projection recover bias [m]
@@ -69,16 +69,16 @@ int main(int argc, char * const argv[ ])
   f << dot(q_x) ==  0.5 * ( w_x * q_w + w_z * q_y - w_y * q_z);
   f << dot(q_y) ==  0.5 * ( w_y * q_w - w_z * q_x + w_x * q_z);
   f << dot(q_z) ==  0.5 * ( w_z * q_w + w_y * q_x - w_x * q_y);
-  f << dot(v_x) ==  2 * ( q_w * q_y + q_x * q_z ) * T / mass;
-  f << dot(v_y) ==  2 * ( q_y * q_z - q_w * q_x ) * T / mass;
-  f << dot(v_z) ==  ( 1 - 2 * q_x * q_x - 2 * q_y * q_y ) * T / mass - g_z;
+  f << dot(v_x) ==  2 * ( q_w * q_y + q_x * q_z ) * a_T;
+  f << dot(v_y) ==  2 * ( q_y * q_z - q_w * q_x ) * a_T;
+  f << dot(v_z) ==  ( 1 - 2 * q_x * q_x - 2 * q_y * q_y ) * a_T - g_z;
 
 	// Cost: Sum(i=0, ..., N-1){h_i' * Q * h_i} + h_N' * Q_N * h_N
   // Running cost vector consists of all states and inputs.
   h << p_x << p_y << p_z
     << q_w << q_x << q_y << q_z
     << v_x << v_y << v_z
-    << T << w_x << w_y << w_z;
+    << a_T << w_x << w_y << w_z;
 
   // End cost vector consists of all states (no inputs at last state).
   hN << p_x << p_y << p_z
@@ -91,7 +91,7 @@ int main(int argc, char * const argv[ ])
 	ocp.subjectTo(-w_max_xy <= w_x <= w_max_xy);
   ocp.subjectTo(-w_max_xy <= w_y <= w_max_xy);
   ocp.subjectTo(-w_max_yaw <= w_z <= w_max_yaw);
-  ocp.subjectTo( T_min <= T <= T_max);
+  ocp.subjectTo( a_T_min <= a_T <= a_T_max);
 
   ocp.setNOD(10);
   //	ocp.subjectTo( -5 <= x <= 5 );
@@ -117,7 +117,7 @@ int main(int argc, char * const argv[ ])
     Q(7,7) = 10;   // vx
     Q(8,8) = 10;   // vy
     Q(9,9) = 10;   // vz
-    Q(10,10) = 0.6;   // T
+    Q(10,10) = 0.6;   // a_T
     Q(11,11) = 0.6;   // wx
     Q(12,12) = 0.6;   // wy
     Q(13,13) = 0.6;   // wz
@@ -215,7 +215,7 @@ int main(int argc, char * const argv[ ])
     window3.addSubplot( w_x,"rotation-acc x" );
     window3.addSubplot( w_y,"rotation-acc y" );
     window3.addSubplot( w_z,"rotation-acc z" ); 
-    window3.addSubplot( T,"Thrust" );
+    window3.addSubplot( a_T,"Specific thrust a_T" );
 
     // Define an algorithm to solve it.
     OptimizationAlgorithm algorithm(ocp);
