@@ -58,6 +58,8 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr reference_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr raw_control_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr hover_thrust_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr solve_time_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr actual_rate_pub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
 
   nav_msgs::msg::Odometry current_odom_;
@@ -90,4 +92,13 @@ private:
   double prediction_dt_{0.1};
   std::string frame_id_{"map"};
   std::string conflicting_setpoint_topic_{"/mavros/setpoint_raw/local"};
+
+  // Performance telemetry
+  rclcpp::Time last_control_cycle_time_{0, 0, RCL_ROS_TIME};
+  double last_solve_time_ms_{0.0};
+  double actual_loop_rate_hz_{0.0};
+  double solve_time_sum_ms_{0.0};
+  double solve_time_max_ms_{0.0};
+  int stat_cycle_count_{0};
+  rclcpp::Time last_stat_log_stamp_{0, 0, RCL_ROS_TIME};
 };

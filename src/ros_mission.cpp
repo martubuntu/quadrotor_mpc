@@ -83,6 +83,10 @@ MPCRos::MPCRos(const rclcpp::Node::SharedPtr & node)
     "/mpc_debug/raw_control", 10);
   hover_thrust_pub_ = node_->create_publisher<std_msgs::msg::Float64>(
     "/mpc_debug/hover_thrust", 10);
+  solve_time_pub_ = node_->create_publisher<std_msgs::msg::Float64>(
+    "/mpc_debug/solve_time_ms", 10);
+  actual_rate_pub_ = node_->create_publisher<std_msgs::msg::Float64>(
+    "/mpc_debug/actual_rate_hz", 10);
 
   wrapper_ = std::make_unique<MPCWrapper>(node_);
   thrust_estimator_ = std::make_unique<ThrustEstimator>(hover_thrust_, kGravity);
@@ -142,6 +146,15 @@ void MPCRos::esoCallback(const geometry_msgs::msg::Vector3Stamped::SharedPtr msg
 
 void MPCRos::controlTimer()
 {
+  const auto now = node_->now();
+  if (last_control_cycle_time_.nanoseconds() > 0) {
+    const double dt_sec = (now - last_control_cycle_time_).seconds();
+    if (dt_sec > 1e-4) {
+      actual_loop_rate_hz_ = 1.0 / dt_sec;
+    }
+  }
+  last_control_cycle_time_ = now;
+
   if (node_->count_publishers(conflicting_setpoint_topic_) > 0) {
     RCLCPP_ERROR_THROTTLE(
       node_->get_logger(), *node_->get_clock(), 2000,
@@ -216,7 +229,39 @@ void MPCRos::controlTimer()
 
   wrapper_->setDisturbance(eso_disturbance_, eso_valid_);
 
-  if (!wrapper_->getSolution(current_odom_, control_)) {
+  const auto t_start = std::chrono::steady_clock::now();
+  const bool solve_ok = wrapper_->getSolution(current_odom_, control_);
+  const auto t_end = std::chrono::steady_clock::now();
+  last_solve_time_ms_ = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+
+  solve_time_sum_ms_ += last_solve_time_ms_;
+  solve_time_max_ms_ = std::max(solve_time_max_ms_, last_solve_time_ms_);
+  stat_cycle_count_++;
+
+  if (last_stat_log_stamp_.nanoseconds() == 0 || (now - last_stat_log_stamp_).seconds() >= 1.0) {
+    const double avg_solve_ms =
+      stat_cycle_count_ > 0 ? (solve_time_sum_ms_ / stat_cycle_count_) : last_solve_time_ms_;
+    const char * mode_str =
+      (mode_ == Mode::TRACKING) ? "TRACKING" : (mode_ == Mode::HOVER ? "HOVER" : "WAITING");
+    RCLCPP_INFO(
+      node_->get_logger(),
+      "[NMPC Rate] %5.1f Hz | Solve: %4.2f ms (avg %4.2f ms, max %4.2f ms) | Mode: %s",
+      actual_loop_rate_hz_, last_solve_time_ms_, avg_solve_ms, solve_time_max_ms_, mode_str);
+
+    solve_time_sum_ms_ = 0.0;
+    solve_time_max_ms_ = 0.0;
+    stat_cycle_count_ = 0;
+    last_stat_log_stamp_ = now;
+  }
+
+  if (last_solve_time_ms_ > 25.0) {
+    RCLCPP_WARN_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 1000,
+      "[NMPC High Latency] Solve took %.2f ms (budget %.1f ms at %.1f Hz)!",
+      last_solve_time_ms_, 1000.0 / control_rate_hz_, control_rate_hz_);
+  }
+
+  if (!solve_ok) {
     RCLCPP_ERROR_THROTTLE(
       node_->get_logger(), *node_->get_clock(), 1000,
       "NMPC solve failed; commanding level hover and reinitializing solver.");
@@ -371,6 +416,14 @@ void MPCRos::publishDebug()
   std_msgs::msg::Float64 hover;
   hover.data = hover_thrust_;
   hover_thrust_pub_->publish(hover);
+
+  std_msgs::msg::Float64 solve_time_msg;
+  solve_time_msg.data = last_solve_time_ms_;
+  solve_time_pub_->publish(solve_time_msg);
+
+  std_msgs::msg::Float64 rate_msg;
+  rate_msg.data = actual_loop_rate_hz_;
+  actual_rate_pub_->publish(rate_msg);
 }
 
 double MPCRos::currentYaw() const
