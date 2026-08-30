@@ -26,12 +26,22 @@ MPCRos::MPCRos(const rclcpp::Node::SharedPtr & node)
   trajectory_timeout_sec_ = node_->declare_parameter<double>("trajectory_timeout_sec", 0.5);
   prediction_dt_ = node_->declare_parameter<double>("prediction_dt", 0.1);
   frame_id_ = node_->declare_parameter<std::string>("rviz_frame_id", "map");
-  const bool auto_arm = node_->declare_parameter<bool>("auto_arm", false);
-  const bool auto_offboard = node_->declare_parameter<bool>("auto_offboard", false);
-  if (auto_arm || auto_offboard) {
-    RCLCPP_WARN(
+  auto_arm_ = node_->declare_parameter<bool>("auto_arm", false);
+  auto_offboard_ = node_->declare_parameter<bool>("auto_offboard", false);
+  takeoff_height_ = node_->declare_parameter<double>("takeoff_height", 0.0);
+
+  const auto arming_service = node_->declare_parameter<std::string>(
+    "mavros_arming_service", "/mavros/cmd/arming");
+  const auto set_mode_service = node_->declare_parameter<std::string>(
+    "mavros_set_mode_service", "/mavros/set_mode");
+
+  if (auto_arm_ || auto_offboard_) {
+    arming_client_ = node_->create_client<mavros_msgs::srv::CommandBool>(arming_service);
+    set_mode_client_ = node_->create_client<mavros_msgs::srv::SetMode>(set_mode_service);
+    RCLCPP_INFO(
       node_->get_logger(),
-      "auto_arm/auto_offboard are intentionally disabled in the first real-flight port; use RC/manual switching.");
+      "Autonomous mission mode enabled: auto_arm=%s, auto_offboard=%s, takeoff_height=%.2fm",
+      auto_arm_ ? "true" : "false", auto_offboard_ ? "true" : "false", takeoff_height_);
   }
 
   const auto state_topic = node_->declare_parameter<std::string>(
@@ -168,12 +178,17 @@ void MPCRos::controlTimer()
     return;
   }
 
+  processAutoArmAndOffboard();
+
   const bool offboard_active =
     has_state_ && current_state_.connected && current_state_.armed &&
     current_state_.mode == "OFFBOARD";
 
   if (!solver_initialized_) {
     hover_odom_ = current_odom_;
+    if (takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
+      hover_odom_.pose.pose.position.z = takeoff_height_;
+    }
     fillHoverReference();
     solver_initialized_ = wrapper_->initSolver(current_odom_);
     if (!solver_initialized_) {
@@ -187,6 +202,9 @@ void MPCRos::controlTimer()
     }
     mode_ = Mode::WAITING;
     hover_odom_ = current_odom_;
+    if (takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
+      hover_odom_.pose.pose.position.z = takeoff_height_;
+    }
     fillHoverReference();
     wrapper_->setReference(reference_);
     wrapper_->setDisturbance(Eigen::Vector3d::Zero(), false);
@@ -197,11 +215,19 @@ void MPCRos::controlTimer()
 
   if (mode_ == Mode::WAITING) {
     hover_odom_ = current_odom_;
+    if (takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
+      hover_odom_.pose.pose.position.z = takeoff_height_;
+      RCLCPP_INFO(
+        node_->get_logger(),
+        "Entering OFFBOARD. Phase 1 Auto-Takeoff initiated: target altitude = %.2f m.",
+        takeoff_height_);
+    } else {
+      RCLCPP_INFO(
+        node_->get_logger(), "Manual OFFBOARD accepted. Hover locked at (%.2f, %.2f, %.2f).",
+        hover_odom_.pose.pose.position.x, hover_odom_.pose.pose.position.y,
+        hover_odom_.pose.pose.position.z);
+    }
     mode_ = Mode::HOVER;
-    RCLCPP_INFO(
-      node_->get_logger(), "Manual OFFBOARD accepted. Hover locked at (%.2f, %.2f, %.2f).",
-      hover_odom_.pose.pose.position.x, hover_odom_.pose.pose.position.y,
-      hover_odom_.pose.pose.position.z);
   }
 
   eso_valid_ = false;
@@ -432,4 +458,60 @@ double MPCRos::currentYaw() const
   return std::atan2(
     2.0 * (q.w * q.z + q.x * q.y),
     1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+}
+
+void MPCRos::processAutoArmAndOffboard()
+{
+  if (!auto_arm_ && !auto_offboard_) {
+    return;
+  }
+  if (!has_state_ || !current_state_.connected) {
+    return;
+  }
+
+  const auto now = node_->now();
+  if (node_start_stamp_.nanoseconds() == 0) {
+    node_start_stamp_ = now;
+    last_service_request_stamp_ = now;
+    return;
+  }
+
+  // Pre-stream setpoints for at least 1.0 second before requesting OFFBOARD
+  if ((now - node_start_stamp_).seconds() < 1.0) {
+    return;
+  }
+
+  // Limit service requests to every 1.5 seconds
+  if ((now - last_service_request_stamp_).seconds() < 1.5) {
+    return;
+  }
+  last_service_request_stamp_ = now;
+
+  if (auto_offboard_ && current_state_.mode != "OFFBOARD") {
+    if (set_mode_client_ && set_mode_client_->service_is_ready()) {
+      auto req = std::make_shared<mavros_msgs::srv::SetMode::Request>();
+      req->custom_mode = "OFFBOARD";
+      set_mode_client_->async_send_request(
+        req,
+        [this](rclcpp::Client<mavros_msgs::srv::SetMode>::SharedFuture future) {
+          const auto res = future.get();
+          if (res->mode_sent) {
+            RCLCPP_INFO(node_->get_logger(), "[Auto Mission] OFFBOARD mode request sent.");
+          }
+        });
+    }
+  } else if (auto_arm_ && !current_state_.armed && current_state_.mode == "OFFBOARD") {
+    if (arming_client_ && arming_client_->service_is_ready()) {
+      auto req = std::make_shared<mavros_msgs::srv::CommandBool::Request>();
+      req->value = true;
+      arming_client_->async_send_request(
+        req,
+        [this](rclcpp::Client<mavros_msgs::srv::CommandBool>::SharedFuture future) {
+          const auto res = future.get();
+          if (res->success) {
+            RCLCPP_INFO(node_->get_logger(), "[Auto Mission] Vehicle armed successfully.");
+          }
+        });
+    }
+  }
 }

@@ -9,6 +9,8 @@
 #include <geometry_msgs/msg/vector3_stamped.hpp>
 #include <mavros_msgs/msg/attitude_target.hpp>
 #include <mavros_msgs/msg/state.hpp>
+#include <mavros_msgs/srv/command_bool.hpp>
+#include <mavros_msgs/srv/set_mode.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
@@ -42,6 +44,7 @@ private:
     const Eigen::Vector3d & acceleration, double yaw) const;
   void publishControl(Eigen::Vector4f control, bool active);
   void publishDebug();
+  void processAutoArmAndOffboard();
   double currentYaw() const;
 
   rclcpp::Node::SharedPtr node_;
@@ -60,6 +63,8 @@ private:
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr hover_thrust_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr solve_time_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr actual_rate_pub_;
+  rclcpp::Client<mavros_msgs::srv::CommandBool>::SharedPtr arming_client_;
+  rclcpp::Client<mavros_msgs::srv::SetMode>::SharedPtr set_mode_client_;
   rclcpp::TimerBase::SharedPtr control_timer_;
 
   nav_msgs::msg::Odometry current_odom_;
@@ -77,9 +82,14 @@ private:
   bool use_eso_{false};
   bool eso_valid_{false};
   bool adaptive_thrust_model_{false};
+  bool auto_arm_{false};
+  bool auto_offboard_{false};
+  double takeoff_height_{0.0};
   Mode mode_{Mode::WAITING};
   rclcpp::Time last_eso_stamp_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_trajectory_stamp_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time node_start_stamp_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_service_request_stamp_{0, 0, RCL_ROS_TIME};
 
   double control_rate_hz_{30.0};
   double hover_thrust_{0.5};

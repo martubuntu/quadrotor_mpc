@@ -64,6 +64,7 @@ public:
     horizon_steps_ = declare_parameter<int>("horizon_steps", 20);
     horizon_dt_ = declare_parameter<double>("horizon_dt", 0.1);
     transition_time_ = declare_parameter<double>("transition_time", 5.0);
+    start_delay_sec_ = declare_parameter<double>("start_delay_sec", 0.0);
     const auto odom_topic = declare_parameter<std::string>(
       "mavros_odom_topic", "/mavros/local_position/odom");
     const auto state_topic = declare_parameter<std::string>(
@@ -80,6 +81,15 @@ public:
       odom_topic, rclcpp::SensorDataQoS(),
       [this](const nav_msgs::msg::Odometry::SharedPtr msg) {
         if (!center_locked_ && offboard_active_) {
+          if (start_delay_sec_ > 0.0) {
+            const double elapsed = (now() - offboard_start_stamp_).seconds();
+            if (elapsed < start_delay_sec_) {
+              return;
+            }
+          }
+          if (height_ > 0.1 && msg->pose.pose.position.z < (height_ - 0.35)) {
+            return;
+          }
           center_.x() = msg->pose.pose.position.x;
           center_.y() = msg->pose.pose.position.y;
           center_.z() = height_ > 0.0 ? height_ : msg->pose.pose.position.z;
@@ -87,14 +97,19 @@ public:
           center_locked_ = true;
           start_time_ = now();
           RCLCPP_INFO(
-            get_logger(), "Circle center locked at (%.2f, %.2f, %.2f).",
-            center_.x(), center_.y(), center_.z());
+            get_logger(),
+            "Phase 2 Circle Trajectory Activated: Center=(%.2f, %.2f, %.2f), Radius=%.2fm, Speed=%.2fm/s",
+            center_.x(), center_.y(), center_.z(), radius_, speed_);
         }
       });
     state_sub_ = create_subscription<mavros_msgs::msg::State>(
       state_topic, rclcpp::QoS(10),
       [this](const mavros_msgs::msg::State::SharedPtr msg) {
-        offboard_active_ = msg->connected && msg->armed && msg->mode == "OFFBOARD";
+        const bool active = msg->connected && msg->armed && msg->mode == "OFFBOARD";
+        if (active && !offboard_active_) {
+          offboard_start_stamp_ = now();
+        }
+        offboard_active_ = active;
       });
     trajectory_pub_ = create_publisher<uav_mpc::msg::MpcRefTraj>(trajectory_topic, 1);
     debug_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(
@@ -186,6 +201,7 @@ private:
   Eigen::Vector3d center_{Eigen::Vector3d::Zero()};
   Quintic1D poly_x_, poly_y_, poly_z_;
   rclcpp::Time start_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time offboard_start_stamp_{0, 0, RCL_ROS_TIME};
   bool center_locked_{false};
   bool offboard_active_{false};
   double radius_{1.5};
@@ -195,6 +211,7 @@ private:
   double publish_rate_{30.0};
   double horizon_dt_{0.1};
   double transition_time_{5.0};
+  double start_delay_sec_{0.0};
   int cycles_{1};
   int horizon_steps_{20};
 };
