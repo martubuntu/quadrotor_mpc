@@ -29,7 +29,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "start_trajectory", default_value="false",
-            description="Enable Phase 2 circle trajectory tracking. False for hover only."
+            description="Enable Phase 2 circle trajectory tracking. Default false for hover only."
         ),
         DeclareLaunchArgument(
             "use_eso", default_value="false",
@@ -48,12 +48,12 @@ def generate_launch_description():
             description="Target altitude for Phase 1 takeoff and hover in meters (simulation)."
         ),
         DeclareLaunchArgument(
-            "start_delay_sec", default_value="6.0",
+            "start_delay_sec", default_value="10.0",
             description="Hover duration before transitioning from Phase 1 to Phase 2 in simulation."
         ),
 
         # -------------------------------------------------------------
-        # NMPC Controller Node (Unified)
+        # NMPC Controller Node (Always active: manages hover & tracking)
         # -------------------------------------------------------------
         Node(
             package="uav_mpc",
@@ -72,7 +72,7 @@ def generate_launch_description():
         ),
 
         # -------------------------------------------------------------
-        # Trajectory Generator Node (Unified)
+        # Trajectory Generator Node (Optional in launch or run independently)
         # -------------------------------------------------------------
         Node(
             condition=IfCondition(start_trajectory),

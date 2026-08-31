@@ -65,7 +65,7 @@ public:
     horizon_steps_ = declare_parameter<int>("horizon_steps", 20);
     horizon_dt_ = declare_parameter<double>("horizon_dt", 0.1);
     transition_time_ = declare_parameter<double>("transition_time", 8.0);
-    const double sim_start_delay = declare_parameter<double>("sim_start_delay_sec", 6.0);
+    const double sim_start_delay = declare_parameter<double>("sim_start_delay_sec", 10.0);
     start_delay_sec_ = declare_parameter<double>("start_delay_sec", is_sim_ ? sim_start_delay : 0.0);
     const auto odom_topic = declare_parameter<std::string>(
       "mavros_odom_topic", "/mavros/local_position/odom");
