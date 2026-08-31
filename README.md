@@ -1,99 +1,127 @@
-# UAV Non-linear MPC (ACADO) 轨迹跟踪控制与性能评估系统
+# UAV Non-linear MPC (ACADO / ROS 2 Humble) 轨迹跟踪控制系统
 
-本项目是基于 **ACADO Toolkit (qpOASES)** 的四旋翼无人机非线性模型预测控制（NMPC）系统，支持 **Gazebo SITL 仿真（含突发阵风扰动）** 与 **实机自主飞行**，具备 ESO 扩展状态风扰观测器、动态推力自适应估计、闭环圆轨迹跟踪、PX4 原生级联 PID 对照组以及多维度性能量化评估体系。
+本项目是基于 **ACADO Toolkit (qpOASES)** 的四旋翼无人机非线性模型预测控制（NMPC）系统，支持 **ROS 2 Humble (Ubuntu 22.04 LTS)**，覆盖 **5 kg 实机平台（Jetson Nano + Pixhawk 6C）** 与 **Gazebo SITL 仿真**。系统具备 ESO 扩展状态风扰观测器前馈补偿、毫秒级求解耗时遥测监控、以及悬停与轨迹跟踪解耦的双指令工作流。
 
-当前开发分支：**`NMPC_trajok_simulation`**
+当前分支：**`ros2-realflight`**
 
 ---
 
-## 🎯 核心研究目标演进路径
+## 📌 最新重构更新日志 (Changelog)
 
-```mermaid
-graph LR
-    Stage1["【已完成】阶段 1: NMPC 闭环基线仿真 (RMSE: 0.118m, 相比PID提升 +65.9%)"] --> Stage2["【当前推进】阶段 2: NMPC + ESO 扩展状态观测器风扰估计与前馈补偿"]
-    Stage2 --> Stage3["【规划中】阶段 3: 偏心载荷与风扰下跟踪-能耗协同优化 NMPC"]
+1. **ROS 2 Humble / Ament 架构移植与 ARM64 编译优化**：
+   * 采用 ROS 2 原生 C++ 接口 (`rclcpp`) 与自定义接口消息 (`MpcRefPoint`, `MpcRefTraj`)。
+   * 配置 `-fPIC` 独立位置代码，彻底修复 Jetson Nano ARM64 架构链接冲突，实现 1.6ms 极速板载求解。
+2. **单一配置文件与单一启动文件（极简架构）**：
+   * **单一配置**：全库所有实机与仿真参数合并至 [config/mpc_para.yaml](file:///c:/Users/superglider/Desktop/UAV/CODE/quadrotor_mpc_eso_nmpc/quadrotor_mpc/config/mpc_para.yaml)。
+   * **单一启动**：全库统一定名为 [launch/nmpc.launch.py](file:///c:/Users/superglider/Desktop/UAV/CODE/quadrotor_mpc_eso_nmpc/quadrotor_mpc/launch/nmpc.launch.py)，通过 `is_sim` 参数在实机与仿真间自由切换。
+3. **悬停与飞圆“双指令物理与时序解耦”**：
+   * **指令 1 (NMPC 控制器)**：负责底层闭环与高精度定点悬停。
+   * **指令 2 (轨迹生成器)**：独立启停飞圆轨迹，随时按 `Ctrl+C` 停止，控制器 0.5s 内自动切回当前位置平稳悬停。
+4. **实时求解性能监控与动力功耗遥测**：
+   * 终端每 1.0s 周期性打印 `[NMPC Rate] 30.0 Hz | Solve: 1.6ms | Mode: HOVER`。
+   * 发布高频遥测话题 `/mpc_debug/solve_time_ms`、`/mpc_debug/actual_rate_hz` 与 `/mavros/battery`（电压/放电电流/总功耗）。
+
+---
+
+## ⚙️ 核心参数表 (`config/mpc_para.yaml`)
+
+| 参数名 | 默认值 | 作用说明 |
+| :--- | :--- | :--- |
+| `is_sim` | `false` | **主模式开关**：`false` 为实机（手动起飞切入，安全第一）；`true` 为 Gazebo 仿真（全自动起飞与模式切换）。 |
+| `hover_thrust` | `0.50` | **实机 5 kg 平台悬停推力**（`is_sim=false` 时生效）。 |
+| `sim_hover_thrust` | `0.58` | **Gazebo Iris 仿真模型悬停推力**（`is_sim=true` 时自动选用）。 |
+| `takeoff_height` | `1.5` | 仿真模式下目标起飞爬升高度（单位 m）。 |
+| `sim_start_delay_sec` | `10.0` | 仿真阶段一（起飞至 1.5m 稳定悬停）保持时间，之后自动无缝切入阶段二飞圆轨迹。 |
+| `start_trajectory` | `false` | 是否在 Launch 中一并启动轨迹节点（`false` 仅悬停，`true` 飞圆）。 |
+| `use_eso` | `false` | 是否接收 `/eso/disturbance` 外部扰动前馈。 |
+| `radius` / `linear_speed` | `1.5` / `0.20` | 圆轨迹半径 (m) 与巡航线速度 (m/s)。 |
+
+---
+
+## 🚀 一、 编译与环境准备
+
+### 在 Jetson Nano / PC (Ubuntu 22.04 + ROS 2 Humble) 上编译：
+```bash
+cd ~/Desktop/uav_ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-select uav_mpc --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/setup.bash
+```
+
+或直接执行一键拉取编译脚本：
+```bash
+~/Desktop/uav_ws/src/quadrotor_mpc/scripts/sync_and_build.sh
 ```
 
 ---
 
-## 🌪️ 一、 VM Ubuntu 20.04 Gazebo SITL 仿真完整操作指南
+## 🛸 二、 实机飞行操作流程 (Real Flight)
 
-仿真世界基于 `windy.world`（**Gazebo 仿真时间 45s~75s 施加 +X 方向 3.0 m/s 阶跃突发阵风**），采用**控制器起飞悬停与轨迹触发解耦**的标准流程。
-
-```mermaid
-graph LR
-    T1["终端 1: Gazebo SITL"] --> T2["终端 2: roscore"]
-    T2 --> T3["终端 3: MAVROS"]
-    T3 --> T4["终端 4: 启动控制器 (自动起飞并悬停)"]
-    T4 --> T5["终端 5: 启动圆轨迹跟踪 (悬停点为圆心 -> 切入圆周)"]
-    T5 --> T6["终端 6: 3页专题学术评测与对比图"]
+### 步骤 1：终端 1 启动 MAVROS 串口通讯
+```bash
+ros2 launch mavros px4.launch fcu_url:=/dev/ttyTHS1:921600
 ```
 
-### 步骤 1：终端 1 启动 PX4 SITL 与 Gazebo 风场环境
+### 步骤 2：终端 2【指令 1】启动 NMPC 控制器（实机定点悬停）
+```bash
+ros2 launch uav_mpc nmpc.launch.py
+```
+* **实飞流程**：
+  1. 飞手遥控器手动起飞至 1.0~1.5m 建立稳定悬停；
+  2. 拨动开关切入 **OFFBOARD** 模式，NMPC 瞬时锁定当前空中位姿定点悬停；
+  3. 随时切回 Position/Manual 模式可瞬间人工接管。
+
+### 步骤 3：终端 3【指令 2】按需随时启停飞圆轨迹
+```bash
+# 启动飞圆：锁定当前圆心，8s 平滑切入并以 0.20m/s 飞圆
+ros2 run uav_mpc circle_traj_node
+
+# 停止飞圆：在终端 3 按 Ctrl+C 终止，NMPC 自动锁死当前悬停点！
+```
+
+---
+
+## 💻 三、 Gazebo SITL 仿真操作流程 (Simulation)
+
+### 步骤 1：终端 1 启动 PX4 SITL 与 Gazebo 环境
 ```bash
 cd ~/PX4-Autopilot
-make px4_sitl gazebo-classic_iris__windy
+make px4_sitl gazebo-classic
 ```
 
-### 步骤 2：终端 2 启动 ROS Master
+### 步骤 2：终端 2 启动 MAVROS 仿真桥接
 ```bash
-source /opt/ros/noetic/setup.bash
-roscore
+ros2 launch mavros px4.launch fcu_url:="udp://:14540@127.0.0.1:14557"
 ```
 
-### 步骤 3：终端 3 启动 MAVROS 桥接节点
+### 步骤 3：终端 3【指令 1】启动 NMPC 控制器（仿真自主起飞与悬停）
 ```bash
-source /opt/ros/noetic/setup.bash
-source ~/Desktop/catkin_ws/devel/setup.bash
-roslaunch mavros px4.launch fcu_url:="udp://:14540@127.0.0.1:14557"
+ros2 launch uav_mpc nmpc.launch.py is_sim:=true
 ```
+* **仿真行为**：无人机在 Gazebo 中自动解锁 ARM，自动切入 OFFBOARD，从地面平稳爬升至 1.5m 定点悬停。
 
-### 步骤 4：终端 4 启动控制器（起飞至 1.5m 稳定悬停）
-
-#### 选项 A（【推荐】阶段二 NMPC + ESO 扩展状态观测器实验组）：
+### 步骤 4：终端 4【指令 2】按需启动 / 停止飞圆轨迹
 ```bash
-source ~/Desktop/catkin_ws/devel/setup.bash
-roslaunch uav_mpc simulation_mpc_eso.launch
-```
-> ESO 节点将在线估计受到的外部风阻加速度 $\hat{\mathbf{d}}$，并实时注入 ACADO 预测模型进行前馈抗扰补偿。
+# 启动仿真飞圆（带 10s 悬停稳定等待）
+ros2 run uav_mpc circle_traj_node --ros-args -p is_sim:=true
 
-#### 选项 B（阶段一 纯 NMPC 实验组）：
-```bash
-source ~/Desktop/catkin_ws/devel/setup.bash
-roslaunch uav_mpc simulation_mpc.launch
+# 停止飞圆：按 Ctrl+C 即可，无人机在空中当前位置平稳锁死悬停
 ```
 
-#### 选项 C（PX4 原生级联 PID 基准对照组）：
-```bash
-source ~/Desktop/catkin_ws/devel/setup.bash
-roslaunch uav_mpc simulation_pid_baseline.launch
-```
-
-### 步骤 5：终端 5 发布圆轨迹（以悬停点为圆心，平滑飞往圆周并绕圆）
-确认无人机在 1.5m 高度悬停平稳后，在终端 5 执行：
-```bash
-source ~/Desktop/catkin_ws/devel/setup.bash
-roslaunch uav_mpc publish_circle_traj.launch height:=1.5 radius:=1.5 linear_vel:=0.8 cycles:=10
-```
-> 轨迹发生器将自动把当前悬停点设为**圆心 $(x_c, y_c)$**，在前 3 秒以五次多项式平滑飞向固定圆周起点 $(x_c + R, y_c)$，随后无冲击切入圆周巡航。
-
-### 步骤 6：终端 6 运行 3 大独立学术专题评估与绘图
-```bash
-cd ~/Desktop/catkin_ws/src/quadrotor_mpc
-python3 scripts/evaluate_nmpc_vs_pid.py
-```
-> 自动加载最新实验数据，生成 45s~75s 阵风工况下的学术评测表格与 3 大独立专题高清对比图（`eval_page1_*.png`, `eval_page2_*.png`, `eval_page3_*.png`）。
+> **提示**：若想单行指令直接一键完成仿真全流程（起飞+悬停10s+飞圆）：
+> ```bash
+> ros2 launch uav_mpc nmpc.launch.py is_sim:=true start_trajectory:=true
+> ```
 
 ---
 
-## 🛠️ 二、 虚拟机桌面工作空间一键拉取与编译指令
+## 📊 四、 实时性能与遥测监控
 
-```bash
-cd ~/Desktop/catkin_ws/src/quadrotor_mpc
-git fetch origin
-git checkout NMPC_trajok_simulation
-git pull origin NMPC_trajok_simulation
-
-cd ~/Desktop/catkin_ws
-catkin_make -DCMAKE_BUILD_TYPE=Release
+NMPC 节点以 30 Hz 运行，并在终端每 1.0 秒输出一次实时求解耗时与频率：
+```text
+[NMPC Rate]  30.0 Hz | Solve: 1.65 ms (avg 1.62 ms, max 2.80 ms) | Mode: HOVER
 ```
+* `/mpc_debug/solve_time_ms`：单步 QP 求解耗时（ms）。
+* `/mpc_debug/actual_rate_hz`：实际外环执行频率（Hz）。
+* `/mpc_debug/mode`：运行状态（`-1`: WAITING 预流，`1`: HOVER 悬停，`2`: TRACKING 轨迹）。
+* `/mavros/battery`：动力电池实时电压与放电电流。

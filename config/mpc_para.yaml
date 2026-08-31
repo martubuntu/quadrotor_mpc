@@ -79,7 +79,7 @@ circle_traj_node:
     cycles: 1
     transition_time: 8.0
     # 仿真阶段一起飞悬停延时时间 (s)，实机自动置为 0.0
-    sim_start_delay_sec: 6.0
+    sim_start_delay_sec: 10.0
     publish_rate: 30.0
     horizon_steps: 20
     horizon_dt: 0.1
