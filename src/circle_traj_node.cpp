@@ -56,15 +56,17 @@ public:
   CircleTrajectoryNode()
   : Node("circle_traj_node")
   {
+    is_sim_ = declare_parameter<bool>("is_sim", false);
     radius_ = declare_parameter<double>("radius", 1.5);
-    speed_ = declare_parameter<double>("linear_speed", 0.3);
-    height_ = declare_parameter<double>("height", 0.0);
+    speed_ = declare_parameter<double>("linear_speed", 0.20);
+    height_ = declare_parameter<double>("height", is_sim_ ? 1.5 : 0.0);
     cycles_ = declare_parameter<int>("cycles", 1);
     publish_rate_ = declare_parameter<double>("publish_rate", 30.0);
     horizon_steps_ = declare_parameter<int>("horizon_steps", 20);
     horizon_dt_ = declare_parameter<double>("horizon_dt", 0.1);
-    transition_time_ = declare_parameter<double>("transition_time", 5.0);
-    start_delay_sec_ = declare_parameter<double>("start_delay_sec", 0.0);
+    transition_time_ = declare_parameter<double>("transition_time", 8.0);
+    const double sim_start_delay = declare_parameter<double>("sim_start_delay_sec", 6.0);
+    start_delay_sec_ = declare_parameter<double>("start_delay_sec", is_sim_ ? sim_start_delay : 0.0);
     const auto odom_topic = declare_parameter<std::string>(
       "mavros_odom_topic", "/mavros/local_position/odom");
     const auto state_topic = declare_parameter<std::string>(
@@ -204,13 +206,14 @@ private:
   rclcpp::Time offboard_start_stamp_{0, 0, RCL_ROS_TIME};
   bool center_locked_{false};
   bool offboard_active_{false};
+  bool is_sim_{false};
   double radius_{1.5};
-  double speed_{0.3};
+  double speed_{0.20};
   double height_{0.0};
   double omega_{0.2};
   double publish_rate_{30.0};
   double horizon_dt_{0.1};
-  double transition_time_{5.0};
+  double transition_time_{8.0};
   double start_delay_sec_{0.0};
   int cycles_{1};
   int horizon_steps_{20};

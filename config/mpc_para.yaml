@@ -1,10 +1,37 @@
 uav_mpc_node:
   ros__parameters:
-    # Same real-flight conventions as uav_pid_mavros: manual ARM and OFFBOARD.
-    auto_arm: false
-    auto_offboard: false
-    control_rate_hz: 30.0
+    # -------------------------------------------------------------
+    # 主模式开关：is_sim 控制仿真与实机环境切换
+    # false = 实机飞行模式（手动起飞定点悬停后切 OFFBOARD，安全第一，5kg 平台推力 0.50）
+    # true  = Gazebo 仿真模式（自动起飞爬升到 1.5m，自动切 OFFBOARD + ARM，Iris 仿真推力 0.58）
+    # -------------------------------------------------------------
+    is_sim: false
 
+    # 5 kg 实机平台悬停油门 (is_sim=false 时生效)
+    hover_thrust: 0.50
+
+    # Gazebo Iris 仿真模型悬停油门 (is_sim=true 时自动使用)
+    sim_hover_thrust: 0.58
+
+    # 仿真模式下目标起飞爬升高度 (m)
+    takeoff_height: 1.5
+
+    # 通用控制参数
+    control_rate_hz: 30.0
+    thrust_min: 0.15
+    thrust_max: 0.85
+    body_rate_limit: 2.0
+    adaptive_thrust_model: false
+
+    # ESO 扰动观测器配置
+    use_eso: false
+    eso_topic: "/eso/disturbance"
+    eso_timeout_sec: 0.20
+    eso_limit: 3.0
+    trajectory_timeout_sec: 0.50
+    prediction_dt: 0.10
+
+    # 通信话题
     mavros_state_topic: "/mavros/state"
     mavros_odom_topic: "/mavros/local_position/odom"
     mavros_imu_topic: "/mavros/imu/data"
@@ -13,32 +40,18 @@ uav_mpc_node:
     trajectory_topic: "/mpc_ref_traj"
     rviz_frame_id: "map"
 
-    # aT [m/s^2] -> normalized PX4 collective thrust.
-    # Calibrate hover_thrust on the actual 5 kg aircraft before flight.
-    hover_thrust: 0.50
-    thrust_min: 0.15
-    thrust_max: 0.80
-    body_rate_limit: 1.5
-    adaptive_thrust_model: false
-
-    # ESO is optional and disabled for the first real-flight deployment.
-    use_eso: false
-    eso_topic: "/eso/disturbance"
-    eso_timeout_sec: 0.20
-    eso_limit: 3.0
-    trajectory_timeout_sec: 0.50
-    prediction_dt: 0.10
-
+    # MPC 物理边界
     bounds:
-      specific_thrust_max: 20.0
+      specific_thrust_max: 25.0
       specific_thrust_min: 2.0
-      wx_max: 1.5
-      wx_min: -1.5
-      wy_max: 1.5
-      wy_min: -1.5
-      wz_max: 1.0
-      wz_min: -1.0
+      wx_max: 2.0
+      wx_min: -2.0
+      wy_max: 2.0
+      wy_min: -2.0
+      wz_max: 1.5
+      wz_min: -1.5
 
+    # MPC 状态权重 (Q, R)
     cost:
       px: 100.0
       py: 100.0
@@ -57,14 +70,16 @@ uav_mpc_node:
 
 circle_traj_node:
   ros__parameters:
+    is_sim: false
     mavros_state_topic: "/mavros/state"
     mavros_odom_topic: "/mavros/local_position/odom"
     trajectory_topic: "/mpc_ref_traj"
     radius: 1.5
     linear_speed: 0.20
-    height: 0.0
     cycles: 1
     transition_time: 8.0
+    # 仿真阶段一起飞悬停延时时间 (s)，实机自动置为 0.0
+    sim_start_delay_sec: 6.0
     publish_rate: 30.0
     horizon_steps: 20
     horizon_dt: 0.1

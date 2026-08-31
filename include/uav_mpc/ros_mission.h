@@ -82,6 +82,7 @@ private:
   bool use_eso_{false};
   bool eso_valid_{false};
   bool adaptive_thrust_model_{false};
+  bool is_sim_{false};
   bool auto_arm_{false};
   bool auto_offboard_{false};
   double takeoff_height_{0.0};

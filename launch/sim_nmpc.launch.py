@@ -19,7 +19,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             "start_trajectory", default_value="true",
-            description="Enable Phase 2 circle trajectory tracking after Phase 1 takeoff in simulation."
+            description="Enable Phase 2 circle trajectory tracking in simulation."
         ),
         DeclareLaunchArgument(
             "use_eso", default_value="false",
@@ -39,9 +39,10 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "start_delay_sec", default_value="6.0",
-            description="Hover duration before transitioning from Phase 1 (Takeoff) to Phase 2 (Trajectory)."
+            description="Hover duration before transitioning from Phase 1 to Phase 2."
         ),
 
+        # Wrapper: automatically forward to real_nmpc.launch.py with is_sim:=true
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(main_launch),
             launch_arguments={

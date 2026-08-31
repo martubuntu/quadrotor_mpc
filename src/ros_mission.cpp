@@ -14,10 +14,15 @@ constexpr double kGravity = 9.8066;
 MPCRos::MPCRos(const rclcpp::Node::SharedPtr & node)
 : node_(node)
 {
+  is_sim_ = node_->declare_parameter<bool>("is_sim", false);
   control_rate_hz_ = node_->declare_parameter<double>("control_rate_hz", 30.0);
-  hover_thrust_ = node_->declare_parameter<double>("hover_thrust", 0.5);
+  hover_thrust_ = node_->declare_parameter<double>("hover_thrust", 0.50);
+  const double sim_hover_thrust = node_->declare_parameter<double>("sim_hover_thrust", 0.58);
+  if (is_sim_) {
+    hover_thrust_ = sim_hover_thrust;
+  }
   thrust_min_ = node_->declare_parameter<double>("thrust_min", 0.15);
-  thrust_max_ = node_->declare_parameter<double>("thrust_max", 0.80);
+  thrust_max_ = node_->declare_parameter<double>("thrust_max", 0.85);
   body_rate_limit_ = node_->declare_parameter<double>("body_rate_limit", 2.0);
   adaptive_thrust_model_ = node_->declare_parameter<bool>("adaptive_thrust_model", false);
   use_eso_ = node_->declare_parameter<bool>("use_eso", false);
@@ -26,9 +31,9 @@ MPCRos::MPCRos(const rclcpp::Node::SharedPtr & node)
   trajectory_timeout_sec_ = node_->declare_parameter<double>("trajectory_timeout_sec", 0.5);
   prediction_dt_ = node_->declare_parameter<double>("prediction_dt", 0.1);
   frame_id_ = node_->declare_parameter<std::string>("rviz_frame_id", "map");
-  auto_arm_ = node_->declare_parameter<bool>("auto_arm", false);
-  auto_offboard_ = node_->declare_parameter<bool>("auto_offboard", false);
-  takeoff_height_ = node_->declare_parameter<double>("takeoff_height", 0.0);
+  auto_arm_ = node_->declare_parameter<bool>("auto_arm", is_sim_);
+  auto_offboard_ = node_->declare_parameter<bool>("auto_offboard", is_sim_);
+  takeoff_height_ = node_->declare_parameter<double>("takeoff_height", is_sim_ ? 1.5 : 0.0);
 
   const auto arming_service = node_->declare_parameter<std::string>(
     "mavros_arming_service", "/mavros/cmd/arming");
@@ -40,8 +45,13 @@ MPCRos::MPCRos(const rclcpp::Node::SharedPtr & node)
     set_mode_client_ = node_->create_client<mavros_msgs::srv::SetMode>(set_mode_service);
     RCLCPP_INFO(
       node_->get_logger(),
-      "Autonomous mission mode enabled: auto_arm=%s, auto_offboard=%s, takeoff_height=%.2fm",
-      auto_arm_ ? "true" : "false", auto_offboard_ ? "true" : "false", takeoff_height_);
+      "[Mode: SIMULATION (is_sim=true)] Auto-Arm=%s, Auto-OFFBOARD=%s, Takeoff Height=%.2f m, Hover Thrust=%.2f",
+      auto_arm_ ? "true" : "false", auto_offboard_ ? "true" : "false", takeoff_height_, hover_thrust_);
+  } else {
+    RCLCPP_INFO(
+      node_->get_logger(),
+      "[Mode: REAL FLIGHT (is_sim=false)] Manual ARM/OFFBOARD required, Hover Thrust=%.2f",
+      hover_thrust_);
   }
 
   const auto state_topic = node_->declare_parameter<std::string>(
