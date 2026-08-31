@@ -11,10 +11,10 @@ def generate_launch_description():
 
     start_trajectory = LaunchConfiguration("start_trajectory")
     use_eso = LaunchConfiguration("use_eso")
-    takeoff_height = LaunchConfiguration("takeoff_height")
-    start_delay_sec = LaunchConfiguration("start_delay_sec")
     radius = LaunchConfiguration("radius")
     linear_speed = LaunchConfiguration("linear_speed")
+    takeoff_height = LaunchConfiguration("takeoff_height")
+    start_delay_sec = LaunchConfiguration("start_delay_sec")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -26,20 +26,20 @@ def generate_launch_description():
             description="Accept /eso/disturbance input in simulation."
         ),
         DeclareLaunchArgument(
-            "takeoff_height", default_value="1.5",
-            description="Target altitude for Phase 1 takeoff and hover in meters."
-        ),
-        DeclareLaunchArgument(
-            "start_delay_sec", default_value="6.0",
-            description="Hover duration in seconds before transitioning from Phase 1 (Takeoff) to Phase 2 (Trajectory)."
-        ),
-        DeclareLaunchArgument(
             "radius", default_value="1.5",
             description="Radius of the circular trajectory in meters."
         ),
         DeclareLaunchArgument(
             "linear_speed", default_value="0.30",
             description="Linear speed of the circular trajectory in m/s."
+        ),
+        DeclareLaunchArgument(
+            "takeoff_height", default_value="1.5",
+            description="Target altitude for Phase 1 takeoff and hover in meters."
+        ),
+        DeclareLaunchArgument(
+            "start_delay_sec", default_value="6.0",
+            description="Hover duration before transitioning from Phase 1 (Takeoff) to Phase 2 (Trajectory)."
         ),
 
         IncludeLaunchDescription(
@@ -48,10 +48,10 @@ def generate_launch_description():
                 "is_sim": "true",
                 "start_trajectory": start_trajectory,
                 "use_eso": use_eso,
-                "takeoff_height": takeoff_height,
-                "start_delay_sec": start_delay_sec,
                 "radius": radius,
                 "linear_speed": linear_speed,
+                "takeoff_height": takeoff_height,
+                "start_delay_sec": start_delay_sec,
             }.items(),
         ),
     ])
