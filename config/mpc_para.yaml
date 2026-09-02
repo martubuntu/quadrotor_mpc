@@ -7,8 +7,8 @@ uav_mpc_node:
     # -------------------------------------------------------------
     is_sim: false
 
-    # 5 kg 实机平台悬停油门 (is_sim=false 时生效)
-    hover_thrust: 0.50
+    # 5 kg 实机平台悬停油门 (基于实测 ULog 标定真值: 0.724)
+    hover_thrust: 0.72
 
     # Gazebo Iris 仿真模型悬停油门 (is_sim=true 时自动使用)
     sim_hover_thrust: 0.58
