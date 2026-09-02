@@ -83,7 +83,7 @@ ros2 run uav_mpc circle_traj_node
 ### 步骤 4：【可选】轻量化 CSV 飞行数据录制（替代高内存消耗的 rosbag）
 若需要保存实验轨迹与能耗数据供论文作图，只需在新终端启动录制节点（每分钟仅占用 ~1.5MB 纯文本 CSV）：
 ```bash
-# 独立启动录制（自动按时间戳保存至 data/ 文件夹）：
+# 独立启动录制（自动按时间戳保存至 data/jetson_flyrecord/ 文件夹）：
 ros2 run uav_mpc data_logger_node
 
 # 或在 launch 启动控制器时一并带上录制：
@@ -91,6 +91,28 @@ ros2 run uav_mpc data_logger_node
 ```
 * **录制内容**：时间戳、实际位姿(XYZ/RPY)、期望轨迹、3D位置跟踪误差、三维速度、控制器比推力与角速度指令、MAVROS实发油门、电池电压/放电电流/总实时功耗/累计能耗(J)、ESO外部扰动。
 * 按 `Ctrl+C` 停止录制时会自动保存并安全关闭文件。
+
+---
+
+## 📁 数据存储与离线分析工具说明 (Data & Analysis Tools)
+
+全工程的飞行日志与分析脚本严格规范划分：
+
+```text
+quadrotor_mpc/
+├── data/
+│   ├── px4_flyrecord/       # 【飞控硬件日志】存放 Pixhawk SD 卡导出的原始 .ulg 格式黑匣子
+│   └── jetson_flyrecord/    # 【机载控制器日志】存放 Jetson Nano 上 data_logger_node 实时录制的 .csv 表格
+└── scripts/
+    ├── parse_px4_ulog.py    # 【PC/Host 离线分析】一键解析 ULog，自动提取真实悬停推力、电机平衡度与平均功耗
+    └── sync_and_build.sh    # 【Jetson 一键同步】自动 git pull 并 colcon build 编译
+```
+
+### 离线分析 Pixhawk ULog（在电脑端执行）：
+```bash
+# 自动扫描 data/px4_flyrecord/ 下的所有 .ulg 文件并输出标定汇总报告：
+python3 scripts/parse_px4_ulog.py
+```
 
 ---
 

@@ -86,7 +86,7 @@ circle_traj_node:
 
 data_logger_node:
   ros__parameters:
-    save_dir: "data"
+    save_dir: "data/jetson_flyrecord"
     log_prefix: "NMPC"
     log_rate: 30.0
     odom_topic: "/mavros/local_position/odom"
