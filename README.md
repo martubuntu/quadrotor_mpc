@@ -104,13 +104,23 @@ quadrotor_mpc/
 │   ├── px4_flyrecord/       # 【飞控硬件日志】存放 Pixhawk SD 卡导出的原始 .ulg 格式黑匣子
 │   └── jetson_flyrecord/    # 【机载控制器日志】存放 Jetson Nano 上 data_logger_node 实时录制的 .csv 表格
 └── scripts/
-    ├── parse_px4_ulog.py    # 【PC/Host 离线分析】一键解析 ULog，自动提取真实悬停推力、电机平衡度与平均功耗
+    ├── analyze_jetson_csv.py # 【Jetson/PC 飞行分析】一键分析 CSV，输出三维 RMSE、总功耗/能耗与 6 图科研曲线
+    ├── parse_px4_ulog.py    # 【PC 飞控离线分析】一键解析 ULog，自动提取真实悬停推力、电机平衡度与平均功耗
     └── sync_and_build.sh    # 【Jetson 一键同步】自动 git pull 并 colcon build 编译
 ```
 
-### 离线分析 Pixhawk ULog（在电脑端执行）：
+### 1. 分析 Jetson Nano 录制的 CSV 飞行数据（在 Jetson 或电脑端均可执行）：
 ```bash
-# 自动扫描 data/px4_flyrecord/ 下的所有 .ulg 文件并输出标定汇总报告：
+# 自动扫描 data/jetson_flyrecord/ 下最新的 CSV 日志并输出学术统计指标 + 生成 6 图曲线：
+python3 scripts/analyze_jetson_csv.py
+
+# 或指定具体文件：
+# python3 scripts/analyze_jetson_csv.py data/jetson_flyrecord/flight_log_NMPC_20260902_170000.csv
+```
+
+### 2. 离线分析 Pixhawk ULog（在电脑端执行）：
+```bash
+# 自动扫描 data/px4_flyrecord/ 下的所有 .ulg 文件并输出动力标定汇总报告：
 python3 scripts/parse_px4_ulog.py
 ```
 
