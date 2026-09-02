@@ -13,6 +13,7 @@ def generate_launch_description():
 
     is_sim = LaunchConfiguration("is_sim")
     start_trajectory = LaunchConfiguration("start_trajectory")
+    record_data = LaunchConfiguration("record_data")
     use_eso = LaunchConfiguration("use_eso")
     radius = LaunchConfiguration("radius")
     linear_speed = LaunchConfiguration("linear_speed")
@@ -30,6 +31,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "start_trajectory", default_value="false",
             description="Enable Phase 2 circle trajectory tracking. Default false for hover only."
+        ),
+        DeclareLaunchArgument(
+            "record_data", default_value="false",
+            description="Record flight states, tracking error, and battery power to lightweight CSV file."
         ),
         DeclareLaunchArgument(
             "use_eso", default_value="false",
@@ -64,7 +69,7 @@ def generate_launch_description():
                 config_file,
                 {
                     "is_sim": ParameterValue(is_sim, value_type=bool),
-                    "use_sim_time": ParameterValue(False, value_type=bool),
+                    "use_sim_time": ParameterValue(is_sim, value_type=bool),
                     "use_eso": ParameterValue(use_eso, value_type=bool),
                     "takeoff_height": ParameterValue(takeoff_height, value_type=float),
                 },
@@ -84,11 +89,28 @@ def generate_launch_description():
                 config_file,
                 {
                     "is_sim": ParameterValue(is_sim, value_type=bool),
-                    "use_sim_time": ParameterValue(False, value_type=bool),
+                    "use_sim_time": ParameterValue(is_sim, value_type=bool),
                     "start_delay_sec": ParameterValue(start_delay_sec, value_type=float),
                     "radius": ParameterValue(radius, value_type=float),
                     "linear_speed": ParameterValue(linear_speed, value_type=float),
                     "height": ParameterValue(takeoff_height, value_type=float),
+                },
+            ],
+        ),
+
+        # -------------------------------------------------------------
+        # Lightweight CSV Data Logger (Optional in launch or run independently)
+        # -------------------------------------------------------------
+        Node(
+            condition=IfCondition(record_data),
+            package="uav_mpc",
+            executable="data_logger_node",
+            name="data_logger_node",
+            output="screen",
+            parameters=[
+                config_file,
+                {
+                    "use_sim_time": ParameterValue(is_sim, value_type=bool),
                 },
             ],
         ),

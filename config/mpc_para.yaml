@@ -83,3 +83,12 @@ circle_traj_node:
     publish_rate: 30.0
     horizon_steps: 20
     horizon_dt: 0.1
+
+data_logger_node:
+  ros__parameters:
+    save_dir: "data"
+    log_prefix: "NMPC"
+    log_rate: 30.0
+    odom_topic: "/mavros/local_position/odom"
+    ref_topic: "/circle_traj/current_ref"
+    battery_topic: "/mavros/battery"

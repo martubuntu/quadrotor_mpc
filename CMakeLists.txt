@@ -68,7 +68,12 @@ target_include_directories(circle_traj_node PRIVATE ${EIGEN3_INCLUDE_DIRS})
 target_link_libraries(circle_traj_node Eigen3::Eigen "${cpp_typesupport_target}")
 ament_target_dependencies(circle_traj_node rclcpp geometry_msgs nav_msgs mavros_msgs)
 
-install(TARGETS mpc_solver mpc_ros_core mpc_node circle_traj_node
+add_executable(data_logger_node src/data_logger_node.cpp)
+target_include_directories(data_logger_node PRIVATE ${EIGEN3_INCLUDE_DIRS})
+target_link_libraries(data_logger_node Eigen3::Eigen)
+ament_target_dependencies(data_logger_node rclcpp geometry_msgs nav_msgs sensor_msgs std_msgs mavros_msgs)
+
+install(TARGETS mpc_solver mpc_ros_core mpc_node circle_traj_node data_logger_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME})
