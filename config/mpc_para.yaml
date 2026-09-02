@@ -2,12 +2,12 @@ uav_mpc_node:
   ros__parameters:
     # -------------------------------------------------------------
     # 主模式开关：is_sim 控制仿真与实机环境切换
-    # false = 实机飞行模式（手动起飞定点悬停后切 OFFBOARD，安全第一，5kg 平台推力 0.50）
+    # false = 实机飞行模式（手动起飞定点悬停后切 OFFBOARD，安全第一，3.5kg 平台推力 0.72）
     # true  = Gazebo 仿真模式（自动起飞爬升到 1.5m，自动切 OFFBOARD + ARM，Iris 仿真推力 0.58）
     # -------------------------------------------------------------
     is_sim: false
 
-    # 5 kg 实机平台悬停油门 (基于实测 ULog 标定真值: 0.724)
+    # 3.5 kg 实机平台悬停油门 (基于实测 ULog 标定真值: 0.724)
     hover_thrust: 0.72
 
     # Gazebo Iris 仿真模型悬停油门 (is_sim=true 时自动使用)
@@ -19,7 +19,7 @@ uav_mpc_node:
     # 通用控制参数
     control_rate_hz: 30.0
     thrust_min: 0.15
-    thrust_max: 0.85
+    thrust_max: 0.88
     body_rate_limit: 2.0
     adaptive_thrust_model: false
 

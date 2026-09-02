@@ -64,7 +64,7 @@ def generate_launch_description():
                 config_file,
                 {
                     "is_sim": ParameterValue(is_sim, value_type=bool),
-                    "use_sim_time": ParameterValue(is_sim, value_type=bool),
+                    "use_sim_time": ParameterValue(False, value_type=bool),
                     "use_eso": ParameterValue(use_eso, value_type=bool),
                     "takeoff_height": ParameterValue(takeoff_height, value_type=float),
                 },
@@ -84,7 +84,7 @@ def generate_launch_description():
                 config_file,
                 {
                     "is_sim": ParameterValue(is_sim, value_type=bool),
-                    "use_sim_time": ParameterValue(is_sim, value_type=bool),
+                    "use_sim_time": ParameterValue(False, value_type=bool),
                     "start_delay_sec": ParameterValue(start_delay_sec, value_type=float),
                     "radius": ParameterValue(radius, value_type=float),
                     "linear_speed": ParameterValue(linear_speed, value_type=float),

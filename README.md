@@ -28,7 +28,7 @@
 | 参数名 | 默认值 | 作用说明 |
 | :--- | :--- | :--- |
 | `is_sim` | `false` | **主模式开关**：`false` 为实机（手动起飞切入，安全第一）；`true` 为 Gazebo 仿真（全自动起飞与模式切换）。 |
-| `hover_thrust` | `0.50` | **实机 5 kg 平台悬停推力**（`is_sim=false` 时生效）。 |
+| `hover_thrust` | `0.72` | **实机 3.5 kg 平台悬停推力**（基于实测 ULog 标定真值，`is_sim=false` 时生效）。 |
 | `sim_hover_thrust` | `0.58` | **Gazebo Iris 仿真模型悬停推力**（`is_sim=true` 时自动选用）。 |
 | `takeoff_height` | `1.5` | 仿真模式下目标起飞爬升高度（单位 m）。 |
 | `sim_start_delay_sec` | `10.0` | 仿真阶段一（起飞至 1.5m 稳定悬停）保持时间，之后自动无缝切入阶段二飞圆轨迹。 |
