@@ -1,6 +1,6 @@
 # UAV Non-linear MPC (ACADO / ROS 2 Humble) 轨迹跟踪控制系统
 
-本项目是基于 **ACADO Toolkit (qpOASES)** 的四旋翼无人机非线性模型预测控制（NMPC）系统，支持 **ROS 2 Humble (Ubuntu 22.04 LTS)**，覆盖 **5 kg 实机平台（Jetson Nano + Pixhawk 6C）** 与 **Gazebo SITL 仿真**。系统具备 ESO 扩展状态风扰观测器前馈补偿、毫秒级求解耗时遥测监控、以及悬停与轨迹跟踪解耦的双指令工作流。
+本项目是基于 **ACADO Toolkit (qpOASES)** 的四旋翼无人机非线性模型预测控制（NMPC）系统，支持 **ROS 2 Humble (Ubuntu 22.04 LTS)**，覆盖 **3.5 kg 实机平台（550轴距 + 6S动力 + 12寸桨 + Jetson Nano + Pixhawk 6C）** 与 **Gazebo SITL 仿真**。系统具备 ESO 扩展状态风扰观测器前馈补偿、毫秒级求解耗时遥测监控、以及悬停与轨迹跟踪解耦的双指令工作流。
 
 当前分支：**`ros2-realflight`**
 
@@ -8,18 +8,18 @@
 
 ## 📌 最新重构更新日志 (Changelog)
 
-1. **ROS 2 Humble / Ament 架构移植与 ARM64 编译优化**：
+1. **实机动力学标定 (3.5 kg 真实全重)**：
+   * 基于实飞 ULog 数据完成精准反演，标定 3.5 kg 机身实测悬停油门 `hover_thrust: 0.72`，稳态悬停功耗基准为 `502.4 W`（~22A @ 22.8V）。
+   * 卸载冗余重载传感器后，推重比恢复至健康裕度，彻底解决机动下坠问题。
+2. **ROS 2 Humble / Ament 架构移植与 ARM64 编译优化**：
    * 采用 ROS 2 原生 C++ 接口 (`rclcpp`) 与自定义接口消息 (`MpcRefPoint`, `MpcRefTraj`)。
    * 配置 `-fPIC` 独立位置代码，彻底修复 Jetson Nano ARM64 架构链接冲突，实现 1.6ms 极速板载求解。
-2. **单一配置文件与单一启动文件（极简架构）**：
+3. **单一配置文件与单一启动文件（极简架构）**：
    * **单一配置**：全库所有实机与仿真参数合并至 [config/mpc_para.yaml](file:///c:/Users/superglider/Desktop/UAV/CODE/quadrotor_mpc_eso_nmpc/quadrotor_mpc/config/mpc_para.yaml)。
    * **单一启动**：全库统一定名为 [launch/nmpc.launch.py](file:///c:/Users/superglider/Desktop/UAV/CODE/quadrotor_mpc_eso_nmpc/quadrotor_mpc/launch/nmpc.launch.py)，通过 `is_sim` 参数在实机与仿真间自由切换。
-3. **悬停与飞圆“双指令物理与时序解耦”**：
+4. **悬停与飞圆“双指令物理与时序解耦”**：
    * **指令 1 (NMPC 控制器)**：负责底层闭环与高精度定点悬停。
    * **指令 2 (轨迹生成器)**：独立启停飞圆轨迹，随时按 `Ctrl+C` 停止，控制器 0.5s 内自动切回当前位置平稳悬停。
-4. **实时求解性能监控与动力功耗遥测**：
-   * 终端每 1.0s 周期性打印 `[NMPC Rate] 30.0 Hz | Solve: 1.6ms | Mode: HOVER`。
-   * 发布高频遥测话题 `/mpc_debug/solve_time_ms`、`/mpc_debug/actual_rate_hz` 与 `/mavros/battery`（电压/放电电流/总功耗）。
 
 ---
 
@@ -28,8 +28,9 @@
 | 参数名 | 默认值 | 作用说明 |
 | :--- | :--- | :--- |
 | `is_sim` | `false` | **主模式开关**：`false` 为实机（手动起飞切入，安全第一）；`true` 为 Gazebo 仿真（全自动起飞与模式切换）。 |
-| `hover_thrust` | `0.72` | **实机 3.5 kg 平台悬停推力**（基于实测 ULog 标定真值，`is_sim=false` 时生效）。 |
+| `hover_thrust` | `0.72` | **实机 3.5 kg 平台悬停推力**（基于实飞 ULog 标定真值，`is_sim=false` 时生效）。 |
 | `sim_hover_thrust` | `0.58` | **Gazebo Iris 仿真模型悬停推力**（`is_sim=true` 时自动选用）。 |
+| `thrust_max` | `0.88` | 实机油门上限保护值（留出 ~16% 动态机动裕度）。 |
 | `takeoff_height` | `1.5` | 仿真模式下目标起飞爬升高度（单位 m）。 |
 | `sim_start_delay_sec` | `10.0` | 仿真阶段一（起飞至 1.5m 稳定悬停）保持时间，之后自动无缝切入阶段二飞圆轨迹。 |
 | `start_trajectory` | `false` | 是否在 Launch 中一并启动轨迹节点（`false` 仅悬停，`true` 飞圆）。 |
