@@ -218,6 +218,7 @@ void MPCRos::controlTimer()
     fillHoverReference();
     wrapper_->setReference(reference_);
     wrapper_->setDisturbance(Eigen::Vector3d::Zero(), false);
+    wrapper_->initSolver(current_odom_);
     publishControl(Eigen::Vector4f(kGravity, 0.0f, 0.0f, 0.0f), false);
     publishDebug();
     return;
@@ -234,11 +235,14 @@ void MPCRos::controlTimer()
     } else {
       RCLCPP_INFO(
         node_->get_logger(),
-        "Manual OFFBOARD accepted. Real-flight hover locked strictly at current hand-flown pose: (%.2f, %.2f, %.2f).",
+        "HOME LOCKED at current hand-flown position: x=%.3f, y=%.3f, z=%.3f, yaw=%.3f rad",
         hover_odom_.pose.pose.position.x, hover_odom_.pose.pose.position.y,
-        hover_odom_.pose.pose.position.z);
+        hover_odom_.pose.pose.position.z, currentYaw());
     }
     mode_ = Mode::HOVER;
+    fillHoverReference();
+    wrapper_->initSolver(hover_odom_);
+    control_ = Eigen::Vector4f(kGravity, 0.0f, 0.0f, 0.0f);
   }
 
   eso_valid_ = false;
