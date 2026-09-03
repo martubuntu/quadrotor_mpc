@@ -20,7 +20,7 @@ uav_mpc_node:
     control_rate_hz: 30.0
     thrust_min: 0.15
     thrust_max: 0.88
-    body_rate_limit: 2.0
+    body_rate_limit: 1.2
     adaptive_thrust_model: false
 
     # ESO 扰动观测器配置
@@ -40,33 +40,33 @@ uav_mpc_node:
     trajectory_topic: "/mpc_ref_traj"
     rviz_frame_id: "map"
 
-    # MPC 物理边界
+    # MPC 物理边界 (温和限幅，严禁暴力冲顶与剧烈晃动)
     bounds:
-      specific_thrust_max: 25.0
-      specific_thrust_min: 2.0
-      wx_max: 2.0
-      wx_min: -2.0
-      wy_max: 2.0
-      wy_min: -2.0
-      wz_max: 1.5
-      wz_min: -1.5
+      specific_thrust_max: 13.5    # 悬停基线为 9.8m/s²，13.5 限制最大爬升过载为 ~1.38g，温和安全
+      specific_thrust_min: 6.0     # 限制最大下坠速度，防止猛掉高
+      wx_max: 1.2
+      wx_min: -1.2
+      wy_max: 1.2
+      wy_min: -1.2
+      wz_max: 1.0
+      wz_min: -1.0
 
-    # MPC 状态权重 (Q, R)
+    # MPC 状态权重 (Q, R): 增强速度阻尼，杜绝位置阶跃引起的剧烈超调
     cost:
-      px: 100.0
-      py: 100.0
-      pz: 100.0
+      px: 60.0
+      py: 60.0
+      pz: 60.0
       qw: 100.0
       qx: 100.0
       qy: 100.0
       qz: 100.0
-      vx: 30.0
-      vy: 30.0
-      vz: 30.0
-      specific_thrust: 30.0
-      wx: 30.0
-      wy: 30.0
-      wz: 30.0
+      vx: 40.0
+      vy: 40.0
+      vz: 40.0
+      specific_thrust: 20.0
+      wx: 20.0
+      wy: 20.0
+      wz: 20.0
 
 circle_traj_node:
   ros__parameters:

@@ -196,7 +196,7 @@ void MPCRos::controlTimer()
 
   if (!solver_initialized_) {
     hover_odom_ = current_odom_;
-    if (takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
+    if (is_sim_ && takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
       hover_odom_.pose.pose.position.z = takeoff_height_;
     }
     fillHoverReference();
@@ -212,7 +212,7 @@ void MPCRos::controlTimer()
     }
     mode_ = Mode::WAITING;
     hover_odom_ = current_odom_;
-    if (takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
+    if (is_sim_ && takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
       hover_odom_.pose.pose.position.z = takeoff_height_;
     }
     fillHoverReference();
@@ -225,15 +225,16 @@ void MPCRos::controlTimer()
 
   if (mode_ == Mode::WAITING) {
     hover_odom_ = current_odom_;
-    if (takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
+    if (is_sim_ && takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
       hover_odom_.pose.pose.position.z = takeoff_height_;
       RCLCPP_INFO(
         node_->get_logger(),
-        "Entering OFFBOARD. Phase 1 Auto-Takeoff initiated: target altitude = %.2f m.",
+        "Entering OFFBOARD. Simulation Phase 1 Auto-Takeoff initiated: target altitude = %.2f m.",
         takeoff_height_);
     } else {
       RCLCPP_INFO(
-        node_->get_logger(), "Manual OFFBOARD accepted. Hover locked at (%.2f, %.2f, %.2f).",
+        node_->get_logger(),
+        "Manual OFFBOARD accepted. Real-flight hover locked strictly at current hand-flown pose: (%.2f, %.2f, %.2f).",
         hover_odom_.pose.pose.position.x, hover_odom_.pose.pose.position.y,
         hover_odom_.pose.pose.position.z);
     }

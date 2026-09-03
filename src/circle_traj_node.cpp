@@ -89,18 +89,19 @@ public:
               return;
             }
           }
-          if (height_ > 0.1 && msg->pose.pose.position.z < (height_ - 0.35)) {
+          if (is_sim_ && height_ > 0.1 && msg->pose.pose.position.z < (height_ - 0.35)) {
             return;
           }
           center_.x() = msg->pose.pose.position.x;
           center_.y() = msg->pose.pose.position.y;
-          center_.z() = height_ > 0.0 ? height_ : msg->pose.pose.position.z;
+          center_.z() = (is_sim_ && height_ > 0.0) ? height_ : msg->pose.pose.position.z;
           initializeTransition();
           center_locked_ = true;
           start_time_ = now();
           RCLCPP_INFO(
             get_logger(),
-            "Phase 2 Circle Trajectory Activated: Center=(%.2f, %.2f, %.2f), Radius=%.2fm, Speed=%.2fm/s",
+            "Phase 2 Circle Trajectory Activated (%s): Center=(%.2f, %.2f, %.2f), Radius=%.2fm, Speed=%.2fm/s",
+            is_sim_ ? "SIMULATION" : "REAL-FLIGHT",
             center_.x(), center_.y(), center_.z(), radius_, speed_);
         }
       });
