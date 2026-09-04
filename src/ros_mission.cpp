@@ -208,17 +208,20 @@ void MPCRos::controlTimer()
 
   if (!offboard_active) {
     if (mode_ != Mode::WAITING) {
-      RCLCPP_WARN(node_->get_logger(), "ARM/OFFBOARD lost; returning to pre-stream wait state.");
+      RCLCPP_WARN(
+        node_->get_logger(),
+        "OFFBOARD or ARM lost. Stop mission control and wait for manual OFFBOARD again.");
     }
     mode_ = Mode::WAITING;
+    has_trajectory_ = false;
     hover_odom_ = current_odom_;
     if (is_sim_ && takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
       hover_odom_.pose.pose.position.z = takeoff_height_;
     }
     fillHoverReference();
+    wrapper_->initSolver(current_odom_);
     wrapper_->setReference(reference_);
     wrapper_->setDisturbance(Eigen::Vector3d::Zero(), false);
-    wrapper_->initSolver(current_odom_);
     publishControl(Eigen::Vector4f(kGravity, 0.0f, 0.0f, 0.0f), false);
     publishDebug();
     return;
@@ -235,14 +238,17 @@ void MPCRos::controlTimer()
     } else {
       RCLCPP_INFO(
         node_->get_logger(),
-        "HOME LOCKED at current hand-flown position: x=%.3f, y=%.3f, z=%.3f, yaw=%.3f rad",
+        "HOME LOCKED at current ENU position: x=%.3f, y=%.3f, z=%.3f, yaw=%.3f rad",
         hover_odom_.pose.pose.position.x, hover_odom_.pose.pose.position.y,
         hover_odom_.pose.pose.position.z, currentYaw());
+      RCLCPP_INFO(
+        node_->get_logger(),
+        "All NMPC tasks will hold this exact z height (z=%.3f) and yaw (yaw=%.3f rad).",
+        hover_odom_.pose.pose.position.z, currentYaw());
     }
-    mode_ = Mode::HOVER;
     fillHoverReference();
-    wrapper_->initSolver(hover_odom_);
-    control_ = Eigen::Vector4f(kGravity, 0.0f, 0.0f, 0.0f);
+    wrapper_->initSolver(current_odom_);
+    mode_ = Mode::HOVER;
   }
 
   eso_valid_ = false;

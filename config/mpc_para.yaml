@@ -42,14 +42,14 @@ uav_mpc_node:
 
     # MPC 物理边界 (温和限幅，严禁暴力冲顶与剧烈晃动)
     bounds:
-      specific_thrust_max: 11    # 悬停基线为 9.8m/s²，13.5 限制最大爬升过载为 ~1.38g，温和安全
-      specific_thrust_min: 6.0     # 限制最大下坠速度，防止猛掉高
-      wx_max: 1.2
-      wx_min: -1.2
-      wy_max: 1.2
-      wy_min: -1.2
-      wz_max: 1.0
-      wz_min: -1.0
+      specific_thrust_max: 11.0    # 悬停基线为 9.8m/s²，11.0 限制最大爬升过载为 ~1.12g，温和安全
+      specific_thrust_min: 7.0     # 限制最大下坠速度，防止猛掉高
+      wx_max: 1.0
+      wx_min: -1.0
+      wy_max: 1.0
+      wy_min: -1.0
+      wz_max: 0.8
+      wz_min: -0.8
 
     # MPC 状态权重 (Q, R): 增强速度阻尼，杜绝位置阶跃引起的剧烈超调
     cost:
