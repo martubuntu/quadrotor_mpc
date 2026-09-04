@@ -13,6 +13,10 @@ The first control input is collective specific thrust $a_T$ in $\text{m/s}^2$; t
 * **两大功能完全解耦（两条指令）**：
   * **指令 1（NMPC 控制器）**：负责底层闭环与高精定点悬停（实机手动切入，仿真自动起飞）。
   * **指令 2（轨迹生成器）**：负责独立开启/停止飞圆轨迹，随时启动、随时 `Ctrl+C` 停掉切回悬停。
+* **三重飞行安全防线与 Offboard 平滑切入 (3-Tier Flight Protections)**：
+  * **保护 1：推力斜率限幅 (Slew Rate Limiter)**，彻底消除瞬间暴冲。
+  * **保护 2：参考误差钳位 (Error Clamping)**，严格限制输入优化器的位置偏差，禁止大阶跃。
+  * **保护 3：Offboard 预热三阶段状态机**，切入后先纯悬停 (HOLD)，再后台求解预热 (WARMUP)，最后平滑接管闭环 (ACTIVE)。
 
 ---
 
@@ -25,6 +29,10 @@ The first control input is collective specific thrust $a_T$ in $\text{m/s}^2$; t
 | `sim_hover_thrust` | `0.58` | **Gazebo Iris 仿真模型悬停推力**（`is_sim=true` 时自动选用）。 |
 | `thrust_max` | `0.88` | 实机油门上限保护值（留出 ~16% 动态机动裕度）。 |
 | `takeoff_height` | `1.5` | 仿真模式下目标起飞爬升高度（单位 m）。 |
+| `thrust_rate_limit_step` | `0.30` | 保护 1: 每周期推力爬升限制（消除单帧暴冲）。 |
+| `max_ref_delta_z` / `xy` | `0.50`/`0.80` | 保护 2: 目标点参考误差硬限幅（限制求解器瞬时大阶跃）。 |
+| `offboard_hold_time_sec` | `2.0` | 保护 3(阶段1): 切入 Offboard 后纯悬停保持时间（T=mg）。 |
+| `offboard_warmup_time_sec`| `1.0` | 保护 3(阶段2): NMPC 后台求解预热时长，输出仍保持 T=mg。 |
 | `sim_start_delay_sec` | `10.0` | 仿真阶段一（起飞至 1.5m 稳定悬停）保持时间，之后自动无缝切入阶段二飞圆轨迹。 |
 | `start_trajectory` | `false` | 是否在 Launch 中一并启动轨迹节点（`false` 仅悬停，`true` 飞圆）。 |
 | `use_eso` | `false` | 是否接收 `/eso/disturbance` 外部扰动前馈。 |
@@ -91,10 +99,15 @@ colcon build --symlink-install --packages-select uav_mpc --cmake-args -DCMAKE_BU
 source install/setup.bash
 ```
 
-或执行一键拉取编译脚本：
-```bash
-~/Desktop/uav_ws/src/quadrotor_mpc/scripts/sync_and_build.sh
-```
+**多设备协同极简工具**：
+* **在 Jetson 上一键拉取并编译**：
+  ```bash
+  ~/Desktop/uav_ws/src/quadrotor_mpc/scripts/sync_and_build.sh
+  ```
+* **在 PC 上一键推送并防冲突 (Push)**：
+  ```bash
+  bash scripts/push_code.sh "提交说明"
+  ```
 
 ---
 
