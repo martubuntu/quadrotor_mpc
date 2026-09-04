@@ -40,6 +40,7 @@ MPCRos::MPCRos(const rclcpp::Node::SharedPtr & node)
   max_ref_delta_z_ = node_->declare_parameter<double>("max_ref_delta_z", 0.50);
   max_ref_delta_xy_ = node_->declare_parameter<double>("max_ref_delta_xy", 0.80);
   offboard_hold_time_sec_ = node_->declare_parameter<double>("offboard_hold_time_sec", 2.0);
+  offboard_warmup_time_sec_ = node_->declare_parameter<double>("offboard_warmup_time_sec", 1.0);
 
   const auto arming_service = node_->declare_parameter<std::string>(
     "mavros_arming_service", "/mavros/cmd/arming");
@@ -103,6 +104,7 @@ MPCRos::MPCRos(const rclcpp::Node::SharedPtr & node)
   command_pub_ = node_->create_publisher<mavros_msgs::msg::AttitudeTarget>(
     command_topic, rclcpp::QoS(10));
   mode_pub_ = node_->create_publisher<std_msgs::msg::Int8>("/mpc_debug/mode", 10);
+  ctrl_state_pub_ = node_->create_publisher<std_msgs::msg::Int8>("/mpc_debug/ctrl_state", 10);
   reference_pub_ = node_->create_publisher<geometry_msgs::msg::PoseStamped>(
     "/mpc_debug/ref_pose", 10);
   raw_control_pub_ = node_->create_publisher<std_msgs::msg::Float32MultiArray>(
@@ -219,6 +221,7 @@ void MPCRos::controlTimer()
         "OFFBOARD or ARM lost. Stop mission control and wait for manual OFFBOARD again.");
     }
     mode_ = Mode::WAITING;
+    ctrl_state_ = ControllerState::HOLD;
     has_trajectory_ = false;
     offboard_enter_stamp_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
     last_specific_thrust_ = kGravity;
@@ -239,6 +242,7 @@ void MPCRos::controlTimer()
     offboard_enter_stamp_ = now;
     last_specific_thrust_ = kGravity;
     hover_odom_ = current_odom_;
+    ctrl_state_ = ControllerState::HOLD;
     if (is_sim_ && takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
       hover_odom_.pose.pose.position.z = takeoff_height_;
       RCLCPP_INFO(
@@ -253,17 +257,23 @@ void MPCRos::controlTimer()
         hover_odom_.pose.pose.position.z, currentYaw());
       RCLCPP_INFO(
         node_->get_logger(),
-        "[Protection 3] Entering %.1fs level hover grace window (T=mg, rates=0)...",
-        offboard_hold_time_sec_);
+        "[Transition Plan] 0.0-%.1fs: Level Hover Hold -> %.1f-%.1fs: NMPC Warmup (Solve-only) -> >%.1fs: NMPC Active",
+        offboard_hold_time_sec_, offboard_hold_time_sec_,
+        offboard_hold_time_sec_ + offboard_warmup_time_sec_,
+        offboard_hold_time_sec_ + offboard_warmup_time_sec_);
     }
     fillHoverReference();
     wrapper_->initSolver(current_odom_);
     mode_ = Mode::HOVER;
   }
 
-  // 保护 3: 首次进入 Offboard 保持 2 秒平稳悬停 (T=mg, 零角速度)
   const double time_in_offboard = (now - offboard_enter_stamp_).seconds();
-  if (time_in_offboard < offboard_hold_time_sec_) {
+  const double t_hold_end = offboard_hold_time_sec_;
+  const double t_warmup_end = offboard_hold_time_sec_ + offboard_warmup_time_sec_;
+
+  // 阶段 1: 0.0s ~ 2.0s -> HOLD (强制水平悬停 T=mg, 零角速度)
+  if (time_in_offboard < t_hold_end) {
+    ctrl_state_ = ControllerState::HOLD;
     hover_odom_ = current_odom_;
     fillHoverReference();
     wrapper_->initSolver(current_odom_);
@@ -273,10 +283,38 @@ void MPCRos::controlTimer()
     publishDebug();
     RCLCPP_INFO_THROTTLE(
       node_->get_logger(), *node_->get_clock(), 500,
-      "[Protection 3: Level Hover Hold] Holding T=mg for %.2f / %.2f s...",
-      time_in_offboard, offboard_hold_time_sec_);
+      "[State: HOLD (0-%.1fs)] Level hover hold T=mg (%.2f / %.2f s)...",
+      t_hold_end, time_in_offboard, t_hold_end);
     return;
   }
+
+  // 阶段 2: 2.0s ~ 3.0s -> NMPC_WARMUP (NMPC后台运行求解预热收敛，但不输出，输出仍保持 T=mg)
+  if (time_in_offboard < t_warmup_end) {
+    ctrl_state_ = ControllerState::NMPC_WARMUP;
+    fillHoverReference();
+    wrapper_->setReference(reference_);
+    wrapper_->setDisturbance(eso_disturbance_, eso_valid_);
+
+    Eigen::Vector4f warmup_control = Eigen::Vector4f::Zero();
+    const auto t_start = std::chrono::steady_clock::now();
+    const bool solve_ok = wrapper_->getSolution(current_odom_, warmup_control);
+    const auto t_end = std::chrono::steady_clock::now();
+    last_solve_time_ms_ = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+
+    // 预热阶段输出仍然严格锁定为 T=mg，机身角速度=0
+    control_ = Eigen::Vector4f(kGravity, 0.0f, 0.0f, 0.0f);
+    publishControl(control_, true);
+    publishDebug();
+    RCLCPP_INFO_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 500,
+      "[State: NMPC_WARMUP (%.1f-%.1fs)] NMPC pre-solving (solve: %.2f ms, ok=%d), holding T=mg (%.2f / %.2f s)...",
+      t_hold_end, t_warmup_end, last_solve_time_ms_, solve_ok ? 1 : 0,
+      time_in_offboard, t_warmup_end);
+    return;
+  }
+
+  // 阶段 3: >= 3.0s -> NMPC_ACTIVE (NMPC平滑接管，真正输出最优控制量)
+  ctrl_state_ = ControllerState::NMPC_ACTIVE;
 
   eso_valid_ = false;
   if (use_eso_ && last_eso_stamp_.nanoseconds() > 0) {
@@ -497,6 +535,10 @@ void MPCRos::publishDebug()
   std_msgs::msg::Int8 mode;
   mode.data = static_cast<int8_t>(mode_);
   mode_pub_->publish(mode);
+
+  std_msgs::msg::Int8 ctrl_state;
+  ctrl_state.data = static_cast<int8_t>(ctrl_state_);
+  ctrl_state_pub_->publish(ctrl_state);
 
   geometry_msgs::msg::PoseStamped pose;
   pose.header.stamp = node_->now();

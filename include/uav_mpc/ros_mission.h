@@ -30,6 +30,7 @@ public:
 
 private:
   enum class Mode : int8_t {WAITING = -1, HOVER = 1, TRACKING = 2};
+  enum class ControllerState : int8_t {HOLD = 0, NMPC_WARMUP = 1, NMPC_ACTIVE = 2};
 
   void controlTimer();
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
@@ -58,6 +59,7 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::Vector3Stamped>::SharedPtr eso_sub_;
   rclcpp::Publisher<mavros_msgs::msg::AttitudeTarget>::SharedPtr command_pub_;
   rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr mode_pub_;
+  rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr ctrl_state_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr reference_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr raw_control_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr hover_thrust_pub_;
@@ -87,6 +89,7 @@ private:
   bool auto_offboard_{false};
   double takeoff_height_{0.0};
   Mode mode_{Mode::WAITING};
+  ControllerState ctrl_state_{ControllerState::HOLD};
   rclcpp::Time last_eso_stamp_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_trajectory_stamp_{0, 0, RCL_ROS_TIME};
   rclcpp::Time node_start_stamp_{0, 0, RCL_ROS_TIME};
@@ -104,11 +107,12 @@ private:
   std::string frame_id_{"map"};
   std::string conflicting_setpoint_topic_{"/mavros/setpoint_raw/local"};
 
-  // 3-Tier Flight Protections
+  // 3-Tier Flight Protections & Warmup State Machine
   double thrust_rate_limit_step_{0.30};
   double max_ref_delta_z_{0.50};
   double max_ref_delta_xy_{0.80};
   double offboard_hold_time_sec_{2.0};
+  double offboard_warmup_time_sec_{1.0};
   rclcpp::Time offboard_enter_stamp_{0, 0, RCL_ROS_TIME};
   double last_specific_thrust_{9.8066};
 

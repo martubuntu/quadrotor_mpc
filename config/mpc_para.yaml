@@ -16,17 +16,18 @@ uav_mpc_node:
     # 仿真模式下目标起飞爬升高度 (m)
     takeoff_height: 1.5
 
-    # 3 重安全保护机制 (3-Tier Flight Protections)
+    # 3 重安全保护与预热机制 (3-Tier Flight Protections & Warmup)
     thrust_rate_limit_step: 0.30   # 保护1: 每周期推力爬升限制 (9.8->10.1->10.4... 30Hz下平滑变化不突跳)
     max_ref_delta_z: 0.50          # 保护2: 高度误差限幅 (限制 |z_ref - z_act| <= 0.5m，禁止大阶跃进入优化)
     max_ref_delta_xy: 0.80         # 保护2: 水平误差限幅 (限制水平位置单步最大偏差 <= 0.8m)
-    offboard_hold_time_sec: 2.0    # 保护3: 首次切入 Offboard 强制保持 2.0 秒水平悬停 (T=mg, 角速度=0)
+    offboard_hold_time_sec: 2.0    # 阶段1 (0-2s): 首次切入 Offboard 保持 2.0 秒水平悬停 (T=mg, 角速度=0)
+    offboard_warmup_time_sec: 1.0  # 阶段2 (2-3s): NMPC 预热 1.0 秒 (后台求解完全收敛但不输出，保持T=mg平稳)
 
     # 通用控制参数
     control_rate_hz: 30.0
     thrust_min: 0.15
     thrust_max: 0.88
-    body_rate_limit: 1.2
+    body_rate_limit: 0.5
     adaptive_thrust_model: false
 
     # ESO 扰动观测器配置
