@@ -21,10 +21,10 @@
    * **指令 1 (NMPC 控制器)**：负责底层闭环与高精度定点悬停。
    * **指令 2 (轨迹生成器)**：独立启停飞圆轨迹，随时按 `Ctrl+C` 停止，控制器 0.5s 内自动切回当前位置平稳悬停。
 5. **三重飞行安全防线与 Offboard 平滑切入 (3-Tier Flight Protections)**：
-   * **保护 1：推力斜率限幅 (Slew Rate Limiter)**，限制推力单步最大变化量，彻底消除瞬间暴冲。
-   * **保护 2：参考误差钳位 (Error Clamping)**，严格限制输入优化器的位置偏差，禁止大阶跃进入求解器。
-   * **保护 3：Offboard 预热三阶段状态机**，切入后先纯悬停 (HOLD)，再后台求解预热 (WARMUP)，最后平滑接管闭环 (ACTIVE)。
-6. **多设备极简 Git 协同**：提供 `push_code.sh` 和 `sync_and_build.sh` 一键跨设备变基同步、推送与编译。
+   * **保护 1：推力斜率限幅 (Slew Rate Limiter)**：限制推力单步最大变化量（`thrust_rate_limit_step: 0.30`），彻底消除切入 Offboard 瞬间暴冲。
+   * **保护 2：参考误差钳位 (Error Clamping)**：限制输入优化器的位置偏差（`max_ref_delta_z: 0.50 m`），禁止大阶跃进入求解器。
+   * **保护 3：Offboard 预热三阶段状态机**：切入后先纯悬停 `HOLD`（0~2s，T=mg），再后台求解预热 `NMPC_WARMUP`（2~3s，solver 收敛但不输出），最后平滑接管闭环 `NMPC_ACTIVE`（3s+）。
+6. **多设备极简 Git 协同**：提供 `push_code.sh`（PC 端一键变基推送）和 `sync_and_build.sh`（Jetson 端一键拉取编译），支持多设备频繁切换无冲突。
 
 ---
 
@@ -36,11 +36,12 @@
 | `hover_thrust` | `0.72` | **实机 3.5 kg 平台悬停推力**（基于实飞 ULog 标定真值，`is_sim=false` 时生效）。 |
 | `sim_hover_thrust` | `0.58` | **Gazebo Iris 仿真模型悬停推力**（`is_sim=true` 时自动选用）。 |
 | `thrust_max` | `0.88` | 实机油门上限保护值（留出 ~16% 动态机动裕度）。 |
+| `body_rate_limit` | `0.5` | 实机角速度指令限幅（rad/s），防止姿态指令过激。 |
 | `takeoff_height` | `1.5` | 仿真模式下目标起飞爬升高度（单位 m）。 |
-| `thrust_rate_limit_step` | `0.30` | 保护 1: 每周期推力爬升限制（消除单帧暴冲）。 |
-| `max_ref_delta_z` / `xy` | `0.50`/`0.80` | 保护 2: 目标点参考误差硬限幅（限制求解器瞬时大阶跃）。 |
-| `offboard_hold_time_sec` | `2.0` | 保护 3(阶段1): 切入 Offboard 后纯悬停保持时间（T=mg）。 |
-| `offboard_warmup_time_sec`| `1.0` | 保护 3(阶段2): NMPC 后台求解预热时长，输出仍保持 T=mg。 |
+| `thrust_rate_limit_step` | `0.30` | **保护 1**：每控制周期推力最大增量（m/s²），消除单帧暴冲。 |
+| `max_ref_delta_z` / `xy` | `0.50`/`0.80` | **保护 2**：目标点参考误差硬限幅（m），禁止大阶跃进入 QP 求解器。 |
+| `offboard_hold_time_sec` | `2.0` | **保护 3 阶段1**：切入 Offboard 后纯悬停保持时间（T=mg，角速度=0）。 |
+| `offboard_warmup_time_sec`| `1.0` | **保护 3 阶段2**：NMPC 后台求解预热时长，solver 收敛后第 3s 起平滑接管。 |
 | `sim_start_delay_sec` | `10.0` | 仿真阶段一（起飞至 1.5m 稳定悬停）保持时间，之后自动无缝切入阶段二飞圆轨迹。 |
 | `start_trajectory` | `false` | 是否在 Launch 中一并启动轨迹节点（`false` 仅悬停，`true` 飞圆）。 |
 | `use_eso` | `false` | 是否接收 `/eso/disturbance` 外部扰动前馈。 |
@@ -113,10 +114,10 @@ quadrotor_mpc/
 │   ├── px4_flyrecord/       # 【飞控硬件日志】存放 Pixhawk SD 卡导出的原始 .ulg 格式黑匣子
 │   └── jetson_flyrecord/    # 【机载控制器日志】存放 Jetson Nano 上 data_logger_node 实时录制的 .csv 表格
 └── scripts/
-    ├── analyze_jetson_csv.py # 【Jetson/PC 飞行分析】一键分析 CSV，输出三维 RMSE、总功耗/能耗与 6 图科研曲线
-    ├── parse_px4_ulog.py     # 【PC 飞控离线分析】一键解析 ULog，自动提取真实悬停推力、电机平衡度与平均功耗
-    ├── push_code.sh          # 【PC 端 Git 协同】一键变基拉取、防冲突并推送到 GitHub
-    └── sync_and_build.sh     # 【Jetson 一键同步】机载端专用的极简一键 git pull 并 colcon build 编译
+    ├── analyze_jetson_csv.py  # 【Jetson/PC 飞行分析】一键分析 CSV，输出三维 RMSE、总功耗/能耗与 6 图科研曲线
+    ├── parse_px4_ulog.py      # 【PC 飞控离线分析】一键解析 ULog，自动提取真实悬停推力、电机平衡度与平均功耗
+    ├── push_code.sh           # 【PC 端 Git 协同】一键 git add → commit → rebase pull → push，多设备无冲突
+    └── sync_and_build.sh      # 【Jetson 一键同步】git pull 拉取最新代码并 colcon build 编译
 ```
 
 ### 1. 分析 Jetson Nano 录制的 CSV 飞行数据（在 Jetson 或电脑端均可执行）：
