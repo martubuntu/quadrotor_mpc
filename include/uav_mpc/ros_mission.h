@@ -104,6 +104,14 @@ private:
   std::string frame_id_{"map"};
   std::string conflicting_setpoint_topic_{"/mavros/setpoint_raw/local"};
 
+  // 3-Tier Flight Protections
+  double thrust_rate_limit_step_{0.30};
+  double max_ref_delta_z_{0.50};
+  double max_ref_delta_xy_{0.80};
+  double offboard_hold_time_sec_{2.0};
+  rclcpp::Time offboard_enter_stamp_{0, 0, RCL_ROS_TIME};
+  double last_specific_thrust_{9.8066};
+
   // Performance telemetry
   rclcpp::Time last_control_cycle_time_{0, 0, RCL_ROS_TIME};
   double last_solve_time_ms_{0.0};

@@ -35,6 +35,12 @@ MPCRos::MPCRos(const rclcpp::Node::SharedPtr & node)
   auto_offboard_ = node_->declare_parameter<bool>("auto_offboard", is_sim_);
   takeoff_height_ = node_->declare_parameter<double>("takeoff_height", is_sim_ ? 1.5 : 0.0);
 
+  // 3-Tier Flight Protections parameters
+  thrust_rate_limit_step_ = node_->declare_parameter<double>("thrust_rate_limit_step", 0.30);
+  max_ref_delta_z_ = node_->declare_parameter<double>("max_ref_delta_z", 0.50);
+  max_ref_delta_xy_ = node_->declare_parameter<double>("max_ref_delta_xy", 0.80);
+  offboard_hold_time_sec_ = node_->declare_parameter<double>("offboard_hold_time_sec", 2.0);
+
   const auto arming_service = node_->declare_parameter<std::string>(
     "mavros_arming_service", "/mavros/cmd/arming");
   const auto set_mode_service = node_->declare_parameter<std::string>(
@@ -214,6 +220,8 @@ void MPCRos::controlTimer()
     }
     mode_ = Mode::WAITING;
     has_trajectory_ = false;
+    offboard_enter_stamp_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+    last_specific_thrust_ = kGravity;
     hover_odom_ = current_odom_;
     if (is_sim_ && takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
       hover_odom_.pose.pose.position.z = takeoff_height_;
@@ -228,6 +236,8 @@ void MPCRos::controlTimer()
   }
 
   if (mode_ == Mode::WAITING) {
+    offboard_enter_stamp_ = now;
+    last_specific_thrust_ = kGravity;
     hover_odom_ = current_odom_;
     if (is_sim_ && takeoff_height_ > 0.1 && hover_odom_.pose.pose.position.z < (takeoff_height_ * 0.5)) {
       hover_odom_.pose.pose.position.z = takeoff_height_;
@@ -243,12 +253,29 @@ void MPCRos::controlTimer()
         hover_odom_.pose.pose.position.z, currentYaw());
       RCLCPP_INFO(
         node_->get_logger(),
-        "All NMPC tasks will hold this exact z height (z=%.3f) and yaw (yaw=%.3f rad).",
-        hover_odom_.pose.pose.position.z, currentYaw());
+        "[Protection 3] Entering %.1fs level hover grace window (T=mg, rates=0)...",
+        offboard_hold_time_sec_);
     }
     fillHoverReference();
     wrapper_->initSolver(current_odom_);
     mode_ = Mode::HOVER;
+  }
+
+  // 保护 3: 首次进入 Offboard 保持 2 秒平稳悬停 (T=mg, 零角速度)
+  const double time_in_offboard = (now - offboard_enter_stamp_).seconds();
+  if (time_in_offboard < offboard_hold_time_sec_) {
+    hover_odom_ = current_odom_;
+    fillHoverReference();
+    wrapper_->initSolver(current_odom_);
+    wrapper_->setReference(reference_);
+    control_ = Eigen::Vector4f(kGravity, 0.0f, 0.0f, 0.0f);
+    publishControl(control_, true);
+    publishDebug();
+    RCLCPP_INFO_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 500,
+      "[Protection 3: Level Hover Hold] Holding T=mg for %.2f / %.2f s...",
+      time_in_offboard, offboard_hold_time_sec_);
+    return;
   }
 
   eso_valid_ = false;
@@ -325,11 +352,19 @@ void MPCRos::controlTimer()
 
 void MPCRos::fillHoverReference()
 {
+  const double curr_x = current_odom_.pose.pose.position.x;
+  const double curr_y = current_odom_.pose.pose.position.y;
+  const double curr_z = current_odom_.pose.pose.position.z;
+
+  // 保护 2: 严格限制参考目标点相对当前实际位置的最大偏差 (误差限幅)
+  const double ref_x = curr_x + std::clamp(hover_odom_.pose.pose.position.x - curr_x, -max_ref_delta_xy_, max_ref_delta_xy_);
+  const double ref_y = curr_y + std::clamp(hover_odom_.pose.pose.position.y - curr_y, -max_ref_delta_xy_, max_ref_delta_xy_);
+  const double ref_z = curr_z + std::clamp(hover_odom_.pose.pose.position.z - curr_z, -max_ref_delta_z_, max_ref_delta_z_);
+
   const Eigen::Quaterniond q_yaw(Eigen::AngleAxisd(currentYaw(), Eigen::Vector3d::UnitZ()));
   for (int i = 0; i <= N; ++i) {
     reference_.col(i) <<
-      hover_odom_.pose.pose.position.x, hover_odom_.pose.pose.position.y,
-      hover_odom_.pose.pose.position.z,
+      ref_x, ref_y, ref_z,
       q_yaw.w(), q_yaw.x(), q_yaw.y(), q_yaw.z(),
       0.0, 0.0, 0.0, kGravity, 0.0, 0.0, 0.0;
   }
@@ -355,6 +390,15 @@ void MPCRos::fillTrajectoryReference()
 
   for (int i = 0; i <= N; ++i) {
     const auto & point = trajectory_.mpc_ref_points[std::min<std::size_t>(i, available - 1)];
+    const double curr_x = current_odom_.pose.pose.position.x;
+    const double curr_y = current_odom_.pose.pose.position.y;
+    const double curr_z = current_odom_.pose.pose.position.z;
+
+    // 保护 2: 轨迹参考点误差限幅 (最大允许水平偏差 0.8m, 高度偏差 0.5m)
+    const double ref_x = curr_x + std::clamp(point.position.x - curr_x, -max_ref_delta_xy_, max_ref_delta_xy_);
+    const double ref_y = curr_y + std::clamp(point.position.y - curr_y, -max_ref_delta_xy_, max_ref_delta_xy_);
+    const double ref_z = curr_z + std::clamp(point.position.z - curr_z, -max_ref_delta_z_, max_ref_delta_z_);
+
     Eigen::Vector3d acceleration(
       point.acceleration.x, point.acceleration.y, point.acceleration.z + kGravity);
     if (use_eso_ && eso_valid_) {
@@ -365,7 +409,7 @@ void MPCRos::fillTrajectoryReference()
       q.coeffs() *= -1.0;
     }
     reference_.col(i) <<
-      point.position.x, point.position.y, point.position.z,
+      ref_x, ref_y, ref_z,
       q.w(), q.x(), q.y(), q.z(),
       point.velocity.x, point.velocity.y, point.velocity.z,
       acceleration.norm(), 0.0, 0.0, 0.0;
@@ -416,6 +460,16 @@ void MPCRos::publishControl(Eigen::Vector4f control, bool active)
   if (!control.allFinite()) {
     control = Eigen::Vector4f(kGravity, 0.0f, 0.0f, 0.0f);
   }
+
+  // 保护 1: 每周期推力爬升与变化率限幅 (Slew Rate Limiter, ±0.30 m/s² per cycle at 30Hz)
+  if (last_specific_thrust_ > 1e-3) {
+    control[0] = std::clamp<float>(
+      control[0],
+      static_cast<float>(last_specific_thrust_ - thrust_rate_limit_step_),
+      static_cast<float>(last_specific_thrust_ + thrust_rate_limit_step_));
+  }
+  last_specific_thrust_ = control[0];
+
   const double specific_thrust = std::clamp<double>(control[0], 0.0, 30.0);
   double thrust = hover_thrust_ * specific_thrust / kGravity;
   if (adaptive_thrust_model_) {
